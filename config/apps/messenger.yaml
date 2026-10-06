@@ -10,4 +10,3 @@ apk_source:
 builds:
   - key: "messenger"
     bundles: ["hushmessenger"]
-    force_build: "346013387"
