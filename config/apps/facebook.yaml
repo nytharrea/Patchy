@@ -1,0 +1,27 @@
+pkg: "com.facebook.katana"
+display_name: "Facebook"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/facebook"
+apk_source:
+  type: apkmirror
+  org: "facebook-2"
+  slug: "facebook"
+builds:
+  - key: "facebook"
+    bundles: ["hushfacebook"]
+    force_build: "240-640dpi"
+    enable:
+      - "Stop Story auto-advance"
+      - "Tag suggestions only after @"
+      - "Tap to play"
+      - "Use the phone's emoji"
+      - "Download any video"
+      - "Don't send reel watch history"
+      - "Use the system font"
+      - "Clean up Reels"
+      - "Default comment order"
+      - "AMOLED black theme"
+      - "Block background-return feed refresh"
+      - "Hide Reels in the feed"
+      - "Hide Stories tray"
+      - "Open on a chosen tab"

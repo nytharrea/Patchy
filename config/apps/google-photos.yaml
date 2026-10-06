@@ -1,0 +1,19 @@
+pkg: "com.google.android.apps.photos"
+display_name: "Google Photos"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/googlephotos"
+apk_source:
+  type: apkmirror
+  org: "google-inc"
+  slug: "photos"
+  release_slug: "google-photos"
+builds:
+  - key: "google-photos"
+    bundles: ["rushi"]
+    enable:
+      - "AMOLED dark theme"
+      - "Change package name"
+      - "Enable DCIM folders backup control"
+      - "Fix DCIM folder classification"
+      - "Spoof features"
+      - "GmsCore support"

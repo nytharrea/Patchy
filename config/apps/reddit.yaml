@@ -1,0 +1,16 @@
+pkg: "com.reddit.frontpage"
+display_name: "Reddit"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/reddit/FF4500"
+apk_source:
+  type: apkmirror
+  org: "reddit-inc"
+  slug: "reddit"
+builds:
+  - key: "reddit"
+    bundles: ["morphe"]
+    enable: ["Clone app", "Change installer source"]
+  - key: "reddit-adobo"
+    bundles: ["adobo"]
+    enable: ["Change package name"]
+    display_name: "Reddit-Adobo"

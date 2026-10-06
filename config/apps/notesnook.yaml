@@ -1,0 +1,12 @@
+pkg: "com.streetwriters.notesnook"
+display_name: "Notesnook"
+arch: "arm64-v8a"
+icon: "https://www.google.com/s2/favicons?sz=128&domain=notesnook.com"
+apk_source:
+  type: apkmirror
+  org: "streetwriters-private-limited"
+  slug: "notesnook-private-notes-app"
+  release_slug: "notesnook-secure-private-notes"
+builds:
+  - key: "notesnook"
+    bundles: ["hxreborn"]

@@ -1,0 +1,13 @@
+pkg: "org.zwanoo.android.speedtest"
+display_name: "Speedtest"
+arch: "arm64-v8a"
+icon: "https://www.google.com/s2/favicons?sz=128&domain=speedtest.net"
+apk_source:
+  type: apkmirror
+  org: "ookla"
+  slug: "speedtest"
+  release_slug: "speedtest-by-ookla"
+builds:
+  - key: "speedtest"
+    bundles: ["rushi", "morphe"]
+    enable: ["Disable Play Store updates"]

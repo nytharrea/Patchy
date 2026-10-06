@@ -1,0 +1,18 @@
+microg:
+  owner: MorpheApp
+  repo: MicroG-RE
+  for_builds: ["youtube", "youtube-music"]
+  variants:
+    - file: "MicroG.apk"
+      suffix: "-arm64-v8a.apk"
+      exclude: "noicon"
+    - file: "MicroG-NoIcon.apk"
+      suffix: "-noicon-arm64-v8a.apk"
+
+pothelper:
+  owner: MorpheApp
+  repo: PotHelper
+  for_builds: ["youtube", "youtube-music"]
+  variants:
+    - file: "PotHelper.apk"
+      suffix: ".apk"

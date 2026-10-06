@@ -1,0 +1,13 @@
+pkg: "ch.protonmail.android"
+display_name: "Proton Mail"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/protonmail"
+apk_source:
+  type: apkmirror
+  org: "proton-technologies-ag"
+  slug: "protonmail-encrypted-email"
+  release_slug: "proton-mail-encrypted-email"
+builds:
+  - key: "proton-mail"
+    bundles: ["hxreborn"]
+    force_version: "7.11.5"

@@ -1,0 +1,33 @@
+pkg: "com.zhiliaoapp.musically"
+display_name: "TikTok"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/tiktok"
+apk_source:
+  type: apkmirror
+  org: "tiktok-pte-ltd"
+  slug: "tik-tok-including-musical-ly"
+  release_slug: "tiktok"
+builds:
+  - key: "tiktok"
+    bundles: ["tiktok", "morphe"]
+    force_version: "46.2.3"
+    enable: ["Disable Play Store updates"]
+  - key: "tiktok-hxreborn"
+    bundles: ["hxreborn-tiktok", "morphe"]
+    force_version: "46.2.3"
+    enable: ["Disable Play Store updates"]
+  - key: "tiktok-bluedragon"
+    bundles: ["bluedragon-tiktok", "morphe"]
+    force_version: "46.4.3"
+    enable: ["Disable Play Store updates"]
+  - key: "tiktok-hushfeed"
+    bundles: ["hushfeed", "morphe"]
+    force_version: "46.2.3"
+    enable: ["Disable Play Store updates"]
+  - key: "tiktok-kveld"
+    bundles: ["kveld-tiktok", "morphe"]
+    force_version: "46.9.3"
+    enable: ["Disable Play Store updates"]
+  - key: "tiktok-wake-old-hyphen"
+    bundles: ["wake-old-hyphen-tiktok", "morphe"]
+    enable: ["Disable Play Store updates"]

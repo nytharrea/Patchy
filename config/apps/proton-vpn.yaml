@@ -1,0 +1,12 @@
+pkg: "ch.protonvpn.android"
+display_name: "Proton VPN"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/protonvpn"
+apk_source:
+  type: apkmirror
+  org: "proton-technologies-ag"
+  slug: "protonvpn-secure-and-free-vpn"
+  release_slug: "proton-vpn-fast-secure-vpn"
+builds:
+  - key: "proton-vpn"
+    bundles: ["hxreborn"]

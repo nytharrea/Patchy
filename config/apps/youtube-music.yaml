@@ -1,0 +1,14 @@
+pkg: "com.google.android.apps.youtube.music"
+display_name: "YT.Music"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/youtubemusic/FF0000"
+apk_source:
+  type: apkmirror
+  org: "google-inc"
+  slug: "youtube-music"
+builds:
+  - key: "youtube-music"
+    bundles: ["morphe"]
+    options:
+      "Custom branding.customName": "YT Music"
+      "Custom branding.appIcon": "original"

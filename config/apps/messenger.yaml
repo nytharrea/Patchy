@@ -1,0 +1,13 @@
+pkg: "com.facebook.orca"
+display_name: "Messenger"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/messenger"
+apk_source:
+  type: apkmirror
+  org: "facebook-2"
+  slug: "messenger"
+  release_slug: "facebook-messenger"
+builds:
+  - key: "messenger"
+    bundles: ["hushmessenger"]
+    force_build: "346013387"

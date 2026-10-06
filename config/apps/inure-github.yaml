@@ -1,0 +1,13 @@
+pkg: "app.simple.inure"
+display_name: "inure-Github"
+arch: "arm64-v8a"
+icon: "https://files.svgcdn.io/arcticons/inure.svg"
+apk_source:
+  type: github
+  owner: "Hamza417"
+  repo: "Inure"
+  asset_hint: "github"
+  tag_template: "build{version}"
+builds:
+  - key: "inure-github"
+    bundles: ["rushi"]

@@ -1,0 +1,26 @@
+pkg: "com.instagram.android"
+display_name: "Instagram"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/instagram/E4405F"
+apk_source:
+  type: apkmirror
+  org: "instagram"
+  slug: "instagram"
+builds:
+  - key: "instagram"
+    bundles: ["piko"]
+  - key: "instagram-hushgram"
+    bundles: ["hushgram"]
+    force_build: "385511871"
+    display_name: "Instagram-HushGram"
+    enable:
+      - "Stop Story auto-advance"
+      - "Tap to play"
+      - "Turn off double tap to like"
+      - "View stories anonymously"
+      - "Don't send reel watch history"
+      - "Clean up Reels"
+      - "Default playback quality"
+      - "Hide the Reels tab"
+      - "Download any video"
+      - "Hide Reels in the feed"

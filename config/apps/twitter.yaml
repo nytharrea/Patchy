@@ -1,0 +1,19 @@
+pkg: "com.twitter.android"
+display_name: "Twitter"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/x/000000"
+apk_source:
+  type: apkmirror
+  org: "x-corp"
+  slug: "twitter"
+  release_slug: "x"
+builds:
+  - key: "twitter"
+    bundles: ["piko"]
+    exclude: ["Dynamic color"]
+    enable: ["Bring back twitter", "Disunify xchat system", "Export all activities"]
+  - key: "twitter-x"
+    bundles: ["piko-newx", "morphe"]
+    force_version: "12.29.1-prod.01"
+    enable: ["Disable Play Store updates"]
+    display_name: "Twitter-X"

@@ -1,0 +1,13 @@
+pkg: "com.brave.browser"
+display_name: "Brave"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/brave/FB542B"
+apk_source:
+  type: apkmirror
+  org: "brave-software"
+  slug: "brave-browser"
+  release_slug: "brave-private-web-browser-vpn"
+builds:
+  - key: "brave"
+    bundles: ["dh6k"]
+    force_version: "1.92.140"

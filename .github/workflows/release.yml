@@ -1,0 +1,344 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      builds:
+        description: "Build keys to patch, comma-separated (all = every build)"
+        type: string
+        default: "all"
+      pin:
+        description: "App slug to trust: moves its fingerprint from pins/pending.json to pins/known.json (skips patching)"
+        type: string
+        default: ""
+      pin_sha256:
+        description: "Fingerprint you verified for the app above (optional safety check)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: patchy-release
+  cancel-in-progress: false
+
+env:
+  UV_PYTHON_DOWNLOADS: never
+
+jobs:
+  plan:
+    if: ${{ inputs.pin == '' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    outputs:
+      release_tag: ${{ steps.plan.outputs.tag }}
+      release_name: ${{ steps.plan.outputs.name }}
+      build_matrix: ${{ steps.plan.outputs.matrix }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+          check-latest: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --no-dev
+
+      - name: Validate config and plan the release
+        id: plan
+        env:
+          BUILDS: ${{ inputs.builds }}
+        run: uv run --no-sync patchy plan
+
+      - name: Fetch the patcher CLI and patch bundles once for the whole matrix
+        env:
+          BUILDS: ${{ inputs.builds }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run --no-sync patchy fetch
+
+      - name: Upload tools artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: patchy-tools
+          path: build/tools
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: patchy-manifest
+          path: build/manifest
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: plan
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      max-parallel: 30
+      matrix:
+        app: ${{ fromJson(needs.plan.outputs.build_matrix) }}
+
+    services:
+      flaresolverr:
+        image: ghcr.io/flaresolverr/flaresolverr:latest
+        ports:
+          - 8191:8191
+        env:
+          LOG_LEVEL: info
+        options: >-
+          --health-cmd "curl -f http://localhost:8191/health || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 15s
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Show runner IP
+        run: curl -s --max-time 10 https://api.ipify.org || true
+
+      - name: Jitter delay before hitting APKMirror
+        run: |
+          delay=$(( RANDOM % 25 ))
+          echo "Sleeping ${delay}s to avoid every matrix job hitting APKMirror in the same instant"
+          sleep "$delay"
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+          check-latest: true
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        with:
+          distribution: temurin
+          java-version: 25
+          check-latest: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --no-dev
+
+      - name: Download tools
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: patchy-tools
+          path: build/tools
+
+      - name: Download manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: patchy-manifest
+          path: build/manifest
+
+      - name: Build (no signing credentials in this job)
+        run: uv run --no-sync python -u -m patchy build --app "$APP"
+        env:
+          PYTHONUNBUFFERED: "1"
+          APP: ${{ matrix.app }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Show FlareSolverr logs
+        if: failure()
+        run: docker logs "$(docker ps -aq --filter ancestor=ghcr.io/flaresolverr/flaresolverr:latest)" 2>&1 | tail -200 || true
+
+      - name: Upload build artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: apk-${{ matrix.app }}
+          path: build/out
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: diagnostics-${{ matrix.app }}-${{ github.run_id }}
+          path: build/diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
+    needs: [plan, build]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+          check-latest: true
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        with:
+          distribution: temurin
+          java-version: 25
+          check-latest: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --no-dev
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: apk-*
+          path: build/artifacts
+          merge-multiple: true
+
+      - name: Download manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: patchy-manifest
+          path: build/manifest
+
+      - name: Sign APKs with the latest apksigner
+        env:
+          PYTHONUNBUFFERED: "1"
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/release.keystore"
+          trap 'rm -f "$keystore"' EXIT
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+            export KS_PATH="$keystore"
+          fi
+          uv run --no-sync patchy sign
+
+      - name: Generate build provenance attestation
+        if: ${{ hashFiles('build/signed/*.apk') != '' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: build/signed/*.apk
+
+      - name: Create release and clean up old releases
+        run: uv run --no-sync patchy publish
+        env:
+          PYTHONUNBUFFERED: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+          RELEASE_NAME: ${{ needs.plan.outputs.release_name }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          APPRISE_URLS: ${{ secrets.APPRISE_URLS }}
+
+      - name: Record pending signature fingerprints
+        if: always()
+        run: uv run --no-sync patchy pin --collect build/artifacts
+
+  pin:
+    if: ${{ inputs.pin != '' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+          check-latest: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --no-dev
+
+      - name: Trust the pending fingerprint
+        env:
+          PIN_APP: ${{ inputs.pin }}
+          PIN_SHA256: ${{ inputs.pin_sha256 }}
+        run: |
+          if [ -n "$PIN_SHA256" ]; then
+            uv run --no-sync patchy pin "$PIN_APP" --sha256 "$PIN_SHA256"
+          else
+            uv run --no-sync patchy pin "$PIN_APP"
+          fi
+
+  cleanup:
+    needs: release
+    if: ${{ always() && inputs.pin == '' }}
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+    steps:
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@b3018382ca039b53d238908238bd35d1fb14f8ee
+        with:
+          retain_days: 30
+          keep_minimum_runs: 5

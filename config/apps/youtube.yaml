@@ -1,0 +1,14 @@
+pkg: "com.google.android.youtube"
+display_name: "YouTube"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/youtube/FF0000"
+apk_source:
+  type: apkmirror
+  org: "google-inc"
+  slug: "youtube"
+builds:
+  - key: "youtube"
+    bundles: ["morphe"]
+    options:
+      "Custom branding.customName": "YouTube"
+      "Custom branding.appIcon": "original"

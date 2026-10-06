@@ -1,0 +1,11 @@
+pkg: "proton.android.pass"
+display_name: "Proton Pass"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/protonpass"
+apk_source:
+  type: apkmirror
+  org: "proton-technologies-ag"
+  slug: "proton-pass-password-manager"
+builds:
+  - key: "proton-pass"
+    bundles: ["rushi", "hxreborn"]
