@@ -14,6 +14,6 @@ builds:
     enable: ["Bring back twitter", "Disunify xchat system", "Export all activities"]
   - key: "twitter-x"
     bundles: ["piko-newx", "morphe"]
-    force_version: "12.29.1-prod.01"
+    force_version: "12.33.0-prod.01"
     enable: ["Disable Play Store updates"]
     display_name: "Twitter-X"
