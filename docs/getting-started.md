@@ -33,7 +33,7 @@ base64 -w0 release.keystore
 
 Paste the single line of output into `KEYSTORE_BASE64`.
 
-Without the four `KEYSTORE_*` secrets the release job logs a warning and publishes the APKs with the patcher's shared default test key. That is fine for a quick trial, but every fork doing the same ends up with the same key, so set your own before relying on the builds.
+The four `KEYSTORE_*` secrets are required. The patcher's output is unsigned, so without them the release job cannot sign anything and reports every app as failed.
 
 ## 3. Create `uv.lock`
 

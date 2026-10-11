@@ -242,21 +242,18 @@ async def test_sign_apk_still_signs_when_zipalign_is_unavailable(monkeypatch, tm
     assert any("zipalign not found" in w for w in warnings)
 
 
-async def test_sign_apk_without_credentials_keeps_the_patchers_signature_and_warns_loudly(monkeypatch, tmp_path):
+async def test_sign_apk_without_credentials_refuses_to_publish_the_unsigned_apk(monkeypatch, tmp_path):
     runner = _Runner()
     _install(monkeypatch, runner)
-    warnings = []
-    monkeypatch.setattr(signer.log, "warn", warnings.append)
     source = tmp_path / "YouTube-1.0.apk"
     source.write_bytes(b"patched apk")
     dest = tmp_path / "signed" / "YouTube-1.0.apk"
 
-    fingerprint = await signer.sign_apk(source, dest, None)
+    with pytest.raises(signer.SigningError, match=r"No signing credentials for YouTube-1\.0\.apk.*KEYSTORE_\*"):
+        await signer.sign_apk(source, dest, None)
 
-    assert fingerprint == FINGERPRINT
-    assert dest.read_bytes() == b"patched apk"
-    assert runner.tools() == ["apksigner:verify"]
-    assert any("test key" in w for w in warnings)
+    assert not dest.exists()
+    assert runner.tools() == []
 
 
 async def test_verify_signed_reports_a_failed_verification(monkeypatch, tmp_path):

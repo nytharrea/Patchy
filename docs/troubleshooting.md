@@ -36,6 +36,14 @@ Patchy asked the patch bundle which build code it was written for and found no s
 
 The row selected by `force_build` has a build code the bundle does not declare for that version, so patching may fail. Remove the pin to let Patchy choose the declared build, or update the value. See [How the APKMirror variant is chosen](configuration.md#how-the-apkmirror-variant-is-chosen).
 
+## `Keystore file not found at .../morphe-data/morphe.keystore`
+
+Morphe CLI 1.18.2-dev.1 and 1.18.2-dev.2 check for the patcher's own default keystore before signing and abort when it does not exist, which is always the case on a fresh runner. Patchy starts the patcher with `--unsigned` (the release job signs with your key), so current versions never reach that check. If you still see this message, the workflow is running an older copy of Patchy.
+
+## `No signing credentials for <app>.apk`
+
+The release job has no usable keystore, and the patcher's output is unsigned, so nothing can be published. Set the four `KEYSTORE_*` secrets, see [Getting started](getting-started.md).
+
 ## Signing step: `apksigner sign failed`
 
 The message ends with `apksigner`'s own output. The usual causes are a wrong `KEY_ALIAS`, a wrong `KEYSTORE_PASSWORD` or `KEY_PASSWORD`, or a `KEYSTORE_BASE64` value that is not a keystore. Affected apps are left out of the release and listed with this reason in the notification.

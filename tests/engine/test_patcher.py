@@ -86,6 +86,14 @@ def test_command_never_carries_signing_credentials():
     assert not [part for part in cmd if part.startswith("--keystore")]
 
 
+def test_command_asks_the_patcher_not_to_sign_so_it_needs_no_keystore():
+    cmd = patcher.build_patch_command("desktop.jar", ["patch-a.mpp"], "input.apk")
+
+    assert cmd.count("--unsigned") == 1
+    assert cmd.index("--unsigned") < cmd.index("input.apk")
+    assert cmd[-1] == "input.apk"
+
+
 def test_options_precede_the_enable_flag_of_their_own_patch():
     cmd = patcher.build_patch_command(
         "desktop.jar",
@@ -208,6 +216,7 @@ async def test_patch_apk_tells_the_user_that_signing_happens_later(monkeypatch, 
     await patcher.patch_apk("desktop.jar", ["patch1"], "input.apk")
 
     assert any("release job" in n for n in notices)
+    assert "--unsigned" in captured["cmd"]
     assert "--keystore" not in captured["cmd"]
 
 

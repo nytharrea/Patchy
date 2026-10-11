@@ -9,7 +9,7 @@ Patch bundles are code. The patcher loads them into its JVM and runs them with t
 | `build` | yes | no | read-only |
 | `release` | no, only Patchy, `zipalign` and `apksigner` | yes, in the signing step only | read and write |
 
-The `build` job starts the patcher with a minimal environment (`PATH`, `HOME`, `JAVA_HOME` and a few locale and temp variables). Tokens and passwords are not inherited, and the checkout does not keep credentials. The patcher still signs its output with its own throwaway test key; that signature is replaced when the release job re-signs the file.
+The `build` job starts the patcher with a minimal environment (`PATH`, `HOME`, `JAVA_HOME` and a few locale and temp variables). Tokens and passwords are not inherited, and the checkout does not keep credentials. The patcher runs with `--unsigned`, so its output carries no signature and needs no keystore of its own; the release job signs the file with your key.
 
 In the `release` job the keystore is decoded to the runner's temp directory, handed only to the signing step, passed to `apksigner` through environment references (`env:PATCHY_KS_PASSWORD`, never on the command line), and deleted when the step ends.
 

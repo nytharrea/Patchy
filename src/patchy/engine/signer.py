@@ -103,15 +103,13 @@ async def verify_signed(apk: Path) -> str:
 
 
 async def sign_apk(source: Path, dest: Path, creds: Credentials | None) -> str:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
     if creds is None:
-        log.warn(
-            f"No signing credentials: {source.name} keeps the patcher's shared default test key. "
-            f"Set the KEYSTORE_* secrets before relying on these builds."
+        raise SigningError(
+            f"No signing credentials for {source.name}: the patcher's output is unsigned and cannot be "
+            f"published as it is. Set the KEYSTORE_* secrets."
         )
-        shutil.copyfile(source, dest)
-        return await verify_signed(dest)
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
 
     aligned = dest.with_name(dest.name + ".aligned")
     try:

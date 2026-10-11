@@ -24,7 +24,7 @@ def build_patch_command(
     options: dict[str, str | None] | None = None,
     arch: str = "arm64-v8a",
 ) -> list[str]:
-    cmd = ["java", "-jar", str(cli_jar), "patch"]
+    cmd = ["java", "-jar", str(cli_jar), "patch", "--unsigned"]
 
     for bundle in bundles:
         cmd += ["--patches", str(bundle)]
@@ -85,10 +85,7 @@ async def patch_apk(
     arch: str = "arm64-v8a",
 ) -> str:
     log.patch(f"Patching APK & stripping unused architectures ({arch} only)...")
-    log.notice(
-        "Patching without signing credentials: the patcher's own temporary signature is replaced "
-        "with your key in the release job."
-    )
+    log.notice("Patching unsigned: the APK is signed with your key in the release job.")
 
     cmd = build_patch_command(cli_jar, bundles, apk, exclude, enable, options, arch)
     log.step(f"Executing command: {' '.join(cmd)}")
