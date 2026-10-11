@@ -32,7 +32,7 @@ src/patchy/
 │  ├─ validate.py      cross-checks the loaded config
 │  └─ plan.py          release tag, name and build matrix
 ├─ fetch/
-│  ├─ apkmirror/       client.py (orchestration), parse.py (HTML), challenge.py (Cloudflare handling)
+│  ├─ apkmirror/       client.py (orchestration), parse.py (HTML, variant choice), challenge.py (Cloudflare handling)
 │  ├─ github.py        GitHub release downloads and GitHub-hosted apps
 │  └─ bundles.py       patcher CLI, patch bundles, companions, bundles.json manifest
 ├─ engine/
@@ -41,7 +41,7 @@ src/patchy/
 │  ├─ verify.py        apksigner-based certificate check against the pins
 │  ├─ pins.py          reading, promoting and committing pins
 │  ├─ signer.py        zipalign, apksigner sign and verify
-│  └─ versions.py      parsing `list-versions` output, APKMirror version slugs
+│  └─ versions.py      parsing `list-versions` output (versions, declared build codes), APKMirror version slugs
 ├─ publish/
 │  ├─ pipeline.py      `sign` and `publish` orchestration
 │  ├─ release.py       GitHub Releases REST wrapper

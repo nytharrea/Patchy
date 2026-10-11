@@ -40,7 +40,7 @@ builds:
 |---|---|---|
 | `pkg` | yes | Android package name, passed to the CLI's `list-versions` |
 | `display_name` | yes | Name used in release asset file names and notes |
-| `arch` | yes | Architecture kept by `--striplibs`, usually `arm64-v8a` |
+| `arch` | yes | Architecture kept by `--striplibs` and looked for on APKMirror, usually `arm64-v8a` |
 | `icon` | yes | Icon URL shown in the release notes |
 | `apk_source` | yes | Where the original APK comes from, see below |
 | `builds` | yes | One or more builds of this app |
@@ -62,10 +62,23 @@ builds:
 | `exclude` | no | List of patch names passed as `--disable` |
 | `enable` | no | List of patch names passed as `--enable` |
 | `options` | no | Mapping of `"Patch name.optionKey"` to a value, passed as `-O` options |
-| `force_version` | no | Skip version discovery and fetch this version |
-| `force_build` | no | Pick an APKMirror variant whose build text matches this value |
+| `force_version` | no | Skip version discovery and fetch this version. The bundle's build codes for it are still looked up |
+| `force_build` | no | Only consider APKMirror rows whose text contains this value, such as a build code or a density. Rarely needed, see [How the APKMirror variant is chosen](#how-the-apkmirror-variant-is-chosen) |
 
 When several builds of one app share a display name, the release file name gets a suffix taken from the first bundle's repository owner (or the build key when that is not unique).
+
+### How the APKMirror variant is chosen
+
+One APKMirror release often lists many variants of the same version: several CPU architectures, different minimum Android levels and screen densities, each with its own build code (Android's `versionCode`). A patch bundle is written against specific builds, so a wrong variant downloads fine and then fails to patch. Patchy applies the same rule as Morphe Manager:
+
+1. The CLI's `list-versions` prints the build codes a bundle declares per architecture, for example `582.0.0.50.54 [versionCodes: ARM64_V8A=475417104, ARMEABI_V7A=475417036]`. Patchy reads them for the selected version, also when the version is pinned with `force_version`.
+2. On the release page it keeps the rows that fit the app's `arch` (universal rows fit any architecture) and takes the row whose build code is the one declared for that `arch`. A code the bundle declares for another architecture, found on a row that fits the `arch`, is the second choice.
+3. When the bundle declares no build code, the original rule applies: plain APKs before bundles, `nodpi` before `anydpi` before a specific density, and the first listed row wins. Instagram builds only consider bundle rows.
+4. When the bundle declares codes but no row carries one of them, the original rule applies as well and the log carries a warning that names the declared codes.
+
+The `VARIANT:` line of the build log is followed by the chosen row's build code, architecture, minimum Android, density and the reason it was chosen.
+
+`force_build` comes first: only rows whose text contains the value are considered, and the declared build code then chooses among those. If the pinned row is not a declared build, the log warns that patching may fail. Because the bundle's own build code is used automatically, `force_build` is rarely needed.
 
 ## `config/bundles.yaml`
 

@@ -10,23 +10,23 @@ apk_source:
 builds:
   - key: "tiktok"
     bundles: ["tiktok", "morphe"]
-    force_version: "46.2.3"
+    force_version: ""
     enable: ["Disable Play Store updates"]
   - key: "tiktok-hxreborn"
     bundles: ["hxreborn-tiktok", "morphe"]
-    force_version: "46.2.3"
+    force_version: ""
     enable: ["Disable Play Store updates"]
   - key: "tiktok-bluedragon"
     bundles: ["bluedragon-tiktok", "morphe"]
-    force_version: "46.4.3"
+    force_version: ""
     enable: ["Disable Play Store updates"]
   - key: "tiktok-hushfeed"
     bundles: ["hushfeed", "morphe"]
-    force_version: "46.2.3"
+    force_version: ""
     enable: ["Disable Play Store updates"]
   - key: "tiktok-kveld"
     bundles: ["kveld-tiktok", "morphe"]
-    force_version: "46.9.3"
+    force_version: ""
     enable: ["Disable Play Store updates"]
   - key: "tiktok-wake-old-hyphen"
     bundles: ["wake-old-hyphen-tiktok", "morphe"]

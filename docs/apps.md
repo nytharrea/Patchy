@@ -41,7 +41,7 @@ Several rows patch the same app from a different bundle (for example `tiktok` an
 
 ## Notes
 
-- `instagram-hushgram` sets `force_build: "385511871"`. HushGram is checked against exactly one Instagram build, which APKMirror lists as the arm64-v8a "480-640dpi" bundle of 449.0.0.52.84. Update this value when HushGram moves to a newer Instagram.
+- `instagram-hushgram` sets `force_build: "385611438"`, the one Instagram build code HushGram declares. Patchy now reads declared build codes from the patch bundle by itself (see [Configuration](configuration.md#how-the-apkmirror-variant-is-chosen)), so this pin is only a safety net and can be removed.
 
 ## Adding a new app
 

@@ -28,6 +28,14 @@ APKMirror kept challenging every attempt and FlareSolverr could not clear it. Th
 
 No patch in the selected bundles is compatible with the downloaded version. Pin a compatible version with `force_version` in the build, or wait for the bundle to support the new release.
 
+## `None of the N arm64-v8a builds listed on APKMirror has a build code the patch bundle declares`
+
+Patchy asked the patch bundle which build code it was written for and found no such build on the release page, so it fell back to the default variant, which often fails to patch. Common causes: APKMirror has not published that build yet (run the build again later), the bundle declares a build for another architecture than the app's `arch`, or the bundle and the listed release have drifted apart. The build log shows the declared codes and the variants that were considered; `force_build` can pin a different row.
+
+## `The build pinned with force_build is not one the patch bundle declares`
+
+The row selected by `force_build` has a build code the bundle does not declare for that version, so patching may fail. Remove the pin to let Patchy choose the declared build, or update the value. See [How the APKMirror variant is chosen](configuration.md#how-the-apkmirror-variant-is-chosen).
+
 ## Signing step: `apksigner sign failed`
 
 The message ends with `apksigner`'s own output. The usual causes are a wrong `KEY_ALIAS`, a wrong `KEYSTORE_PASSWORD` or `KEY_PASSWORD`, or a `KEYSTORE_BASE64` value that is not a keystore. Affected apps are left out of the release and listed with this reason in the notification.

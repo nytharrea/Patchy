@@ -1,6 +1,7 @@
 import asyncio
 import re
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
@@ -20,16 +21,18 @@ from .challenge import (
     register_challenge,
 )
 from .parse import (
+    DEFAULT_ARCH,
+    Pick,
     abs_url,
     classes,
     dump_variant_rows_for_debug,
-    extract_variant_url,
     find_listing_link,
     has_download_button,
     is_404_html,
     listing_candidates,
     parse,
     row_count,
+    select_variant,
     version_from_href,
 )
 
@@ -192,7 +195,43 @@ async def _resolve_download_url(variant_url: str, variant_cleared: Cleared) -> t
     return confirm_url, confirm_cleared
 
 
-async def download_apk(version: str, app_slug: str, site: ApkMirrorSite, force_build: str | None = None) -> str:
+def _describe_declared_codes(build_codes: Mapping[str, int]) -> str:
+    return ", ".join(f"{name}={code}" for name, code in build_codes.items())
+
+
+def _log_pick(pick: Pick, arch: str, force_build: str | None, build_codes: Mapping[str, int] | None) -> None:
+    detail = pick.variant.describe(pick.matched_code)
+    declared = _describe_declared_codes(build_codes) if build_codes else ""
+
+    if pick.basis == "target-build":
+        log.info(f"   {detail} - the build code the patch bundle declares for {arch}")
+    elif pick.basis == "declared-build":
+        log.info(f"   {detail} - a build code the patch bundle declares for another architecture")
+    elif force_build:
+        log.info(f"   {detail} - pinned with force_build")
+        if build_codes:
+            log.warn(
+                f"The build pinned with force_build is not one the patch bundle declares ({declared}), "
+                f"so patching may fail."
+            )
+    else:
+        log.info(f"   {detail} - default pick ({pick.eligible} of {pick.listed} listed builds fit {arch})")
+        if build_codes:
+            log.warn(
+                f"None of the {pick.eligible} {arch} builds listed on APKMirror has a build code the patch "
+                f"bundle declares ({declared}), so the default pick is used and may not be patchable."
+            )
+
+
+async def download_apk(
+    version: str,
+    app_slug: str,
+    site: ApkMirrorSite,
+    force_build: str | None = None,
+    *,
+    arch: str = DEFAULT_ARCH,
+    build_codes: Mapping[str, int] | None = None,
+) -> str:
     out_dir = paths.downloads_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -203,13 +242,23 @@ async def download_apk(version: str, app_slug: str, site: ApkMirrorSite, force_b
         variant_url = list_url
         log.info(f"VARIANT: {variant_url} (single-variant release)")
     else:
+        if build_codes:
+            log.search(
+                f"Patch bundle declares build code(s) for {version}: {_describe_declared_codes(build_codes)}"
+            )
+
         listing_base = f"https://www.apkmirror.com/apk/{site['org']}/{site['slug']}/"
         variant_url = None
+        pick: Pick | None = None
         for attempt in range(4):
             cleared = await _fetch(list_url, label="list-page")
             tree = parse(cleared.html)
-            found = extract_variant_url(tree, force_build, app_slug) if tree is not None else None
-            variant_url = abs_url(listing_base, found) if found else None
+            pick = (
+                select_variant(tree, force_build, app_slug, arch=arch, build_codes=build_codes)
+                if tree is not None
+                else None
+            )
+            variant_url = abs_url(listing_base, pick.variant.href) if pick is not None else None
             if variant_url:
                 break
             log.notice(f"No matching row found on page, retrying ({attempt + 1}/4)...")
@@ -217,10 +266,14 @@ async def download_apk(version: str, app_slug: str, site: ApkMirrorSite, force_b
             if attempt < 3:
                 await asyncio.sleep(2.0 * (attempt + 1))
 
-        if not variant_url:
+        if not variant_url or pick is None:
             await _save_diagnostic_html(cleared.html, f"no-variant-{app_slug}")
             raise RuntimeError("No matching variant found on APKMirror")
         log.info(f"VARIANT: {variant_url}")
+        _log_pick(pick, arch, force_build, build_codes)
+        if build_codes and pick.basis == "default" and not force_build:
+            dump_variant_rows_for_debug(tree)
+            await _save_diagnostic_html(cleared.html, f"no-declared-build-{app_slug}")
 
     if variant_url is None:
         raise RuntimeError(f"Could not resolve a variant URL for {app_slug}")

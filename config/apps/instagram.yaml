@@ -11,7 +11,7 @@ builds:
     bundles: ["piko"]
   - key: "instagram-hushgram"
     bundles: ["hushgram"]
-    force_build: "385511871"
+    force_build: "385611438"
     display_name: "Instagram-HushGram"
     enable:
       - "Stop Story auto-advance"

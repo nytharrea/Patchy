@@ -1,5 +1,10 @@
 from patchy.engine import versions as versions_module
-from patchy.engine.versions import extract_cli_versions, pick_latest_version, to_apkmirror_version
+from patchy.engine.versions import (
+    extract_cli_version_codes,
+    extract_cli_versions,
+    pick_latest_version,
+    to_apkmirror_version,
+)
 
 
 def test_extract_versions_from_compatible_section():
@@ -39,6 +44,79 @@ def test_extract_versions_handles_the_versioncodes_bracket(monkeypatch):
     )
     assert extract_cli_versions(output) == [{"version": "439.0.0.37.89", "patches": 5}]
     assert warnings == []
+
+
+def test_extract_versions_keeps_every_listed_version_when_codes_are_declared():
+    output = (
+        "Most common compatible versions:\n"
+        "\t582.0.0.50.54 [versionCodes: ARM64_V8A=475417104, ARMEABI_V7A=475417036] (86 patches)\n"
+        "\t581.0.0.1.1 (40 patches)\n\n"
+    )
+    assert extract_cli_versions(output) == [
+        {"version": "582.0.0.50.54", "patches": 86},
+        {"version": "581.0.0.1.1", "patches": 40},
+    ]
+
+
+def test_extract_version_codes_reads_every_arch_of_the_bracket():
+    output = (
+        "Package name: com.facebook.katana\n"
+        "Most common compatible versions:\n"
+        "\t582.0.0.50.54 [versionCodes: ARM64_V8A=475417104, ARMEABI_V7A=475417036] (86 patches)\n\n"
+    )
+    assert extract_cli_version_codes(output) == {
+        "582.0.0.50.54": {"ARM64_V8A": 475417104, "ARMEABI_V7A": 475417036},
+    }
+
+
+def test_extract_version_codes_only_lists_versions_that_declare_codes():
+    output = (
+        "Most common compatible versions:\n"
+        "439.0.0.37.89 [versionCodes: ARM64_V8A=331058270] (5 patches)\n"
+        "438.0.0.1.1 (3 patches)\n"
+        "437.0.0.1.1 [versionCodes: X86_64=7] (1 patch)\n\n"
+    )
+    assert extract_cli_version_codes(output) == {
+        "439.0.0.37.89": {"ARM64_V8A": 331058270},
+        "437.0.0.1.1": {"X86_64": 7},
+    }
+
+
+def test_extract_version_codes_ignores_a_bracket_that_is_not_a_version_code_list():
+    output = "Most common compatible versions:\n1.2.3 [experimental] (2 patches)\n\n"
+    assert extract_cli_versions(output) == [{"version": "1.2.3", "patches": 2}]
+    assert extract_cli_version_codes(output) == {}
+
+
+def test_extract_version_codes_is_empty_without_codes_for_any_or_a_missing_section(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(versions_module.log, "warn", warnings.append)
+
+    assert extract_cli_version_codes("Most common compatible versions:\nAny\n\n") == {}
+    assert extract_cli_version_codes("Most common compatible versions:\n19.35.36 (5 patches)\n\n") == {}
+    assert extract_cli_version_codes("Nothing version-looking in here at all.") == {}
+    assert extract_cli_version_codes("") == {}
+    assert warnings == []
+
+
+def test_extract_version_codes_does_not_warn_or_dump_an_unparseable_section(monkeypatch, tmp_path):
+    warnings = []
+    monkeypatch.setattr(versions_module.log, "warn", warnings.append)
+    monkeypatch.setattr(versions_module.paths, "diagnostics_dir", lambda: tmp_path)
+
+    assert extract_cli_version_codes("Most common compatible versions:\n* v19.35.36 - 5 patches\n\n") == {}
+    assert warnings == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_extract_version_codes_stops_at_the_first_blank_line_like_the_version_list():
+    output = (
+        "Most common compatible versions:\n"
+        "1.0.0 [versionCodes: ARM64_V8A=100] (2 patches)\n"
+        "\n"
+        "2.0.0 [versionCodes: ARM64_V8A=200] (2 patches)\n"
+    )
+    assert extract_cli_version_codes(output) == {"1.0.0": {"ARM64_V8A": 100}}
 
 
 def test_extract_versions_returns_empty_for_any_without_warning(monkeypatch):

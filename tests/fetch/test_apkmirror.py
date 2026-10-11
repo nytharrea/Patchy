@@ -3,11 +3,14 @@ import pytest
 from patchy.core.flaresolverr import Cleared
 from patchy.fetch.apkmirror import ChallengeError, challenge, client
 from patchy.fetch.apkmirror.parse import (
+    arch_key,
     closest,
     extract_variant_url,
     is_404_html,
     listing_candidates,
     parse,
+    parse_variants,
+    select_variant,
     variant_rows,
     version_from_href,
 )
@@ -73,6 +76,317 @@ def test_extract_variant_url_force_build_matches_dpi_and_version_cells():
     assert extract_variant_url(parse(html), "240-640dpi", "facebook") == "/android11"
     assert extract_variant_url(parse(html), "475019344", "facebook") == "/android11"
     assert extract_variant_url(parse(html), "999", "facebook") is None
+
+
+FACEBOOK_RELEASE = "/apk/facebook-2/facebook/facebook-582-0-0-50-54-release/"
+
+FACEBOOK_582_ROWS = [
+    (2, "", 475417029, "October 8, 2026", "arm64-v8a", "Android 9.0+", "480-640dpi", "5"),
+    (1, "", 475417031, "October 8, 2026", "arm64-v8a", "Android 11+", "480dpi", "7"),
+    (1, "NEW", 475417032, "October 10, 2026", "x86", "Android 8.0+", "480dpi", "17"),
+    (1, "NEW", 475417034, "October 10, 2026", "armeabi-v7a", "Android 8.0+", "480dpi", "16"),
+    (1, "", 475417036, "October 8, 2026", "armeabi-v7a", "Android 11+", "320dpi", "11"),
+    (1, "", 475417037, "October 8, 2026", "arm64-v8a", "Android 11+", "213-480dpi", "12"),
+    (1, "", 475417038, "October 8, 2026", "x86", "Android 8.0+", "480dpi", "10"),
+    (1, "", 475417040, "October 8, 2026", "armeabi-v7a", "Android 8.0+", "480dpi", "4"),
+    (1, "NEW", 475417041, "October 10, 2026", "arm64-v8a", "Android 9.0+", "480dpi", "15"),
+    (11, "", 475417043, "October 8, 2026", "arm64-v8a", "Android 11+", "480dpi", "9"),
+    (1, "", 475417102, "October 8, 2026", "arm64-v8a", "Android 9.0+", "480dpi", "3"),
+    (2, "", 475417104, "October 8, 2026", "arm64-v8a", "Android 11+", "320-640dpi", "13"),
+    (1, "", 475417105, "October 8, 2026", "x86", "Android 8.0+", "480dpi", ""),
+    (1, "", 475417126, "October 8, 2026", "armeabi-v7a", "Android 8.0+", "480dpi", "6"),
+    (2, "", 475417127, "October 8, 2026", "arm64-v8a", "Android 9.0+", "480-640dpi", "2"),
+    (1, "", 475417129, "October 8, 2026", "arm64-v8a", "Android 11+", "480-640dpi", "8"),
+    (1, "", 475417131, "October 8, 2026", "x86_64", "Android 9.0+", "480dpi", "14"),
+]
+
+HUSHFACEBOOK_CODES = {"ARM64_V8A": 475417104, "ARMEABI_V7A": 475417036}
+
+
+def _facebook_variant_href(number):
+    suffix = f"-{number}" if number else ""
+    return f"{FACEBOOK_RELEASE}facebook-582-0-0-50-54{suffix}-android-apk-download/"
+
+
+def _facebook_row(badge_count, flag, code, date, arch, android, dpi, number):
+    href = _facebook_variant_href(number)
+    new_badge = '<span class="apkm-badge success">NEW</span>' if flag else ""
+    return f"""
+    <div class="table-row headerFont">
+      <div class="table-cell rowheight addseparator expand pad dowrap">
+        <span class="apkm-badge">BUNDLE</span><span class="apkm-badge">{badge_count}</span>
+        <a class="accent_color" href="{href}">582.0.0.50.54</a>{new_badge}
+        <div><span>S</span> <span>8a3c</span></div>
+        <div>{code}</div>
+        <div>{date}</div>
+        <a href="{href}#comments">Comments</a>
+      </div>
+      <div class="table-cell rowheight addseparator expand pad dowrap">{arch}</div>
+      <div class="table-cell rowheight addseparator expand pad">{android}</div>
+      <div class="table-cell rowheight addseparator expand pad dowrap">{dpi}</div>
+    </div>
+    """
+
+
+def _facebook_html(rows=None):
+    body = "".join(_facebook_row(*row) for row in (FACEBOOK_582_ROWS if rows is None else rows))
+    return f'<html><body><div class="variants-table">{body}</div></body></html>'
+
+
+def _split(code, arch, dpi, href, android="Android 11+", badge="BUNDLE"):
+    return f"""
+    <div class="table-row">
+      <div class="table-cell"><span class="apkm-badge">{badge}</span><a class="accent_color" href="{href}">1.0</a>
+        <div>{code}</div></div>
+      <div class="table-cell">{arch}</div>
+      <div class="table-cell">{android}</div>
+      <div class="table-cell">{dpi}</div>
+    </div>
+    """
+
+
+def test_parse_variants_reads_every_column_of_the_real_facebook_table():
+    variants = parse_variants(parse(_facebook_html()))
+
+    assert len(variants) == 17
+    declared = variants[11]
+    assert declared.href == _facebook_variant_href("13")
+    assert declared.build_code == 475417104
+    assert declared.arch == "arm64-v8a"
+    assert declared.min_android == "Android 11+"
+    assert declared.dpi == "320-640dpi"
+    assert declared.is_bundle is True
+
+
+def test_parse_variants_does_not_mistake_badge_counts_or_the_dotted_version_for_a_build_code():
+    variants = parse_variants(parse(_facebook_html([FACEBOOK_582_ROWS[11]])))
+
+    assert 2 not in variants[0].build_codes
+    assert 582 not in variants[0].build_codes
+    assert 475417104 in variants[0].build_codes
+
+
+def test_parse_variants_finds_a_build_code_that_shares_a_text_node_with_other_words():
+    html = """<html><body><div class="variants-table">
+        <div class="table-row">
+          <div class="table-cell"><a class="accent_color" href="/a">Foo 1.0</a> Build 123456789 uploaded today</div>
+          <div class="table-cell">arm64-v8a</div>
+          <div class="table-cell">Android 8.0+</div>
+          <div class="table-cell">nodpi</div>
+        </div>
+    </div></body></html>"""
+
+    assert parse_variants(parse(html))[0].build_codes == frozenset({123456789})
+
+
+def test_parse_variants_skips_rows_without_a_link_or_with_too_few_cells():
+    html = """<html><body><div class="variants-table">
+        <div class="table-row"><div class="table-cell">header</div></div>
+        <div class="table-row">
+          <div class="table-cell">no link</div><div class="table-cell">a</div>
+          <div class="table-cell">b</div><div class="table-cell">c</div>
+        </div>
+        <div class="table-row">
+          <div class="table-cell"><a class="accent_color">no href</a></div><div class="table-cell">a</div>
+          <div class="table-cell">b</div><div class="table-cell">c</div>
+        </div>
+    </div></body></html>"""
+
+    assert parse_variants(parse(html)) == []
+
+
+def test_select_variant_picks_the_row_with_the_build_code_the_bundle_declares():
+    pick = select_variant(parse(_facebook_html()), None, "facebook", build_codes=HUSHFACEBOOK_CODES)
+
+    assert pick is not None
+    assert pick.variant.href == _facebook_variant_href("13")
+    assert pick.basis == "target-build"
+    assert pick.matched_code == 475417104
+    assert pick.listed == 17
+    assert pick.eligible == 9
+
+
+def test_select_variant_without_declared_codes_keeps_the_old_pick_that_failed_in_ci():
+    pick = select_variant(parse(_facebook_html()), None, "facebook")
+
+    assert pick is not None
+    assert pick.variant.href == _facebook_variant_href("5")
+    assert pick.basis == "default"
+    assert pick.matched_code is None
+
+
+def test_select_variant_follows_the_target_arch_of_the_build():
+    pick = select_variant(
+        parse(_facebook_html()), None, "facebook", arch="armeabi-v7a", build_codes=HUSHFACEBOOK_CODES
+    )
+
+    assert pick is not None
+    assert pick.variant.href == _facebook_variant_href("11")
+    assert pick.matched_code == 475417036
+
+
+def test_select_variant_falls_back_to_the_default_pick_when_no_listed_build_is_declared():
+    pick = select_variant(parse(_facebook_html()), None, "facebook", build_codes={"ARM64_V8A": 111111111})
+
+    assert pick is not None
+    assert pick.variant.href == _facebook_variant_href("5")
+    assert pick.basis == "default"
+    assert pick.matched_code is None
+
+
+def test_select_variant_never_leaves_the_target_arch_even_for_a_declared_code():
+    pick = select_variant(parse(_facebook_html()), None, "facebook", build_codes={"ARM64_V8A": 475417032})
+
+    assert pick is not None
+    assert pick.variant.arch == "arm64-v8a"
+    assert pick.basis == "default"
+
+
+def test_select_variant_ignores_a_declared_code_that_only_exists_for_another_arch_row():
+    pick = select_variant(parse(_facebook_html()), None, "facebook", build_codes={"ARMEABI_V7A": 475417036})
+
+    assert pick is not None
+    assert pick.variant.arch == "arm64-v8a"
+    assert pick.basis == "default"
+
+
+def test_select_variant_accepts_a_code_declared_for_another_arch_on_a_multi_arch_row():
+    html = f"""<html><body><div class="variants-table">
+        {_split(555555, "arm64-v8a", "nodpi", "/arm64-only")}
+        {_split(777777, "arm64-v8a + armeabi-v7a", "nodpi", "/both")}
+    </div></body></html>"""
+    codes = {"ARM64_V8A": 999999, "ARMEABI_V7A": 777777}
+
+    pick = select_variant(parse(html), None, "foo", build_codes=codes)
+
+    assert pick is not None
+    assert pick.variant.href == "/both"
+    assert pick.basis == "declared-build"
+    assert pick.matched_code == 777777
+
+
+def test_select_variant_prefers_the_target_arch_code_over_another_archs_code():
+    html = f"""<html><body><div class="variants-table">
+        {_split(777777, "arm64-v8a + armeabi-v7a", "nodpi", "/both")}
+        {_split(555555, "arm64-v8a", "nodpi", "/arm64-only")}
+    </div></body></html>"""
+    codes = {"ARM64_V8A": 555555, "ARMEABI_V7A": 777777}
+
+    pick = select_variant(parse(html), None, "foo", build_codes=codes)
+
+    assert pick is not None
+    assert pick.variant.href == "/arm64-only"
+    assert pick.basis == "target-build"
+
+
+def test_select_variant_lets_force_build_narrow_the_rows_before_the_declared_code_decides():
+    pick = select_variant(
+        parse(_facebook_html()), "Android 9.0+", "facebook", build_codes={"ARM64_V8A": 475417104}
+    )
+
+    assert pick is not None
+    assert pick.variant.min_android == "Android 9.0+"
+    assert pick.variant.href == _facebook_variant_href("5")
+    assert pick.basis == "default"
+
+
+def test_select_variant_uses_the_declared_code_among_the_rows_a_force_build_keeps():
+    pick = select_variant(parse(_facebook_html()), "Android 11+", "facebook", build_codes={"ARM64_V8A": 475417104})
+
+    assert pick is not None
+    assert pick.variant.href == _facebook_variant_href("13")
+    assert pick.basis == "target-build"
+
+
+def test_select_variant_returns_none_when_no_row_fits_the_arch():
+    html = f"""<html><body><div class="variants-table">
+        {_split(1000001, "x86", "nodpi", "/x86")}
+        {_split(1000002, "x86_64", "nodpi", "/x86_64")}
+    </div></body></html>"""
+
+    assert select_variant(parse(html), None, "foo") is None
+    assert select_variant(parse(html), None, "foo", arch="x86_64") is not None
+
+
+def test_select_variant_keeps_the_default_dpi_order_between_rows_with_the_same_build_code():
+    html = f"""<html><body><div class="variants-table">
+        {_split(424242, "arm64-v8a", "480dpi", "/specific", badge="APK")}
+        {_split(424242, "arm64-v8a", "nodpi", "/nodpi", badge="APK")}
+    </div></body></html>"""
+
+    pick = select_variant(parse(html), None, "foo", build_codes={"ARM64_V8A": 424242})
+
+    assert pick is not None
+    assert pick.variant.href == "/nodpi"
+
+
+def test_select_variant_accepts_the_arch_spellings_apkmirror_uses():
+    html = f"""<html><body><div class="variants-table">
+        {_split(1, "armeabi-v7a", "nodpi", "/v7")}
+        {_split(2, "x86_64", "nodpi", "/x86_64")}
+        {_split(3, "arm64-v8a (64-bit)", "nodpi", "/annotated")}
+        {_split(4, "armeabi-v7a arm64-v8a x86", "nodpi", "/spaced")}
+    </div></body></html>"""
+
+    assert extract_variant_url(parse(html), None, "foo") == "/annotated"
+    assert extract_variant_url(parse(html), None, "foo", arch="x86_64") == "/x86_64"
+    assert extract_variant_url(parse(html), None, "foo", arch="x86") == "/spaced"
+    assert extract_variant_url(parse(html), None, "foo", arch="ARMEABI_V7A") == "/v7"
+
+
+@pytest.mark.parametrize("arch", ["universal", "noarch", "evrensel", "Universal", ""])
+def test_select_variant_treats_universal_rows_as_fitting_any_arch(arch):
+    html = f"""<html><body><div class="variants-table">
+        {_split(1, arch, "nodpi", "/any")}
+    </div></body></html>"""
+
+    assert extract_variant_url(parse(html), None, "foo", arch="armeabi-v7a") == "/any"
+
+
+def test_extract_variant_url_forwards_the_arch_and_the_declared_build_codes():
+    tree = parse(_facebook_html())
+
+    positional = extract_variant_url(tree, None, "facebook", "arm64-v8a", HUSHFACEBOOK_CODES)
+    keyword = extract_variant_url(tree, None, "facebook", arch="armeabi-v7a", build_codes=HUSHFACEBOOK_CODES)
+
+    assert positional == _facebook_variant_href("13")
+    assert keyword == _facebook_variant_href("11")
+
+
+def test_extract_variant_url_instagram_still_requires_a_bundle_when_a_code_is_declared():
+    html = f"""<html><body><div class="variants-table">
+        {_split(385611438, "arm64-v8a", "nodpi", "/plain-apk", badge="APK")}
+        {_split(385611439, "arm64-v8a", "nodpi", "/bundle")}
+    </div></body></html>"""
+
+    assert extract_variant_url(parse(html), None, "instagram", build_codes={"ARM64_V8A": 385611438}) == "/bundle"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("ARM64_V8A", "arm64v8a"),
+        ("arm64-v8a", "arm64v8a"),
+        ("ARMEABI_V7A", "armeabiv7a"),
+        ("X86_64", "x8664"),
+        ("x86_64", "x8664"),
+        ("x86", "x86"),
+    ],
+)
+def test_arch_key_makes_cli_names_and_apkmirror_names_comparable(raw, expected):
+    assert arch_key(raw) == expected
+
+
+def test_arch_key_keeps_x86_and_x86_64_apart():
+    assert arch_key("x86") != arch_key("X86_64")
+
+
+def test_variant_describe_lists_what_a_person_needs_to_judge_the_pick():
+    pick = select_variant(parse(_facebook_html()), None, "facebook", build_codes=HUSHFACEBOOK_CODES)
+
+    assert pick is not None
+    assert pick.variant.describe() == "build 475417104, arm64-v8a, Android 11+, 320-640dpi, bundle"
+    assert pick.variant.describe(1500) == "build 1500, arm64-v8a, Android 11+, 320-640dpi, bundle"
 
 
 def test_variant_rows_ignores_rows_outside_variants_table():
@@ -275,3 +589,89 @@ async def test_resolve_list_url_surfaces_the_challenge_instead_of_pretending_the
 
     with pytest.raises(ChallengeError):
         await client._resolve_list_url({"org": "acme-inc", "slug": "acme-app"}, "1.2.3")
+
+
+FACEBOOK_SITE = {"org": "facebook-2", "slug": "facebook"}
+FACEBOOK_LIST_URL = f"https://www.apkmirror.com{FACEBOOK_RELEASE}"
+
+
+async def _download_facebook(monkeypatch, tmp_path, **kwargs):
+    fetched = []
+    warnings = []
+
+    async def fake_resolve_list_url(site, version):
+        return FACEBOOK_LIST_URL, False
+
+    async def fake_fetch(url, label, **fetch_kwargs):
+        fetched.append((label, url))
+        html = _facebook_html() if label == "list-page" else "<html><body>variant page</body></html>"
+        return Cleared(url=url, status=200, html=html, user_agent="", cookies=[])
+
+    async def fake_resolve_download_url(variant_url, variant_cleared):
+        return "https://www.apkmirror.com/file", variant_cleared
+
+    async def fake_download_file(url, cleared, out_dir, fallback_name):
+        path = out_dir / "facebook.apkm"
+        path.write_bytes(b"x" * 2048)
+        return path
+
+    monkeypatch.setattr(client, "_resolve_list_url", fake_resolve_list_url)
+    monkeypatch.setattr(client, "_fetch", fake_fetch)
+    monkeypatch.setattr(client, "_resolve_download_url", fake_resolve_download_url)
+    monkeypatch.setattr(client.flaresolverr, "download_file", fake_download_file)
+    monkeypatch.setattr(client.paths, "downloads_dir", lambda: tmp_path)
+    monkeypatch.setattr(client.paths, "diagnostics_dir", lambda: tmp_path / "diagnostics")
+    monkeypatch.setattr(client.log, "warn", warnings.append)
+
+    await client.download_apk("582.0.0.50.54", "facebook", FACEBOOK_SITE, **kwargs)
+    return fetched, warnings
+
+
+def _variant_page_fetched(fetched):
+    return [url for label, url in fetched if label == "variant-page"]
+
+
+async def test_download_apk_opens_the_variant_page_of_the_build_the_bundle_declares(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(
+        monkeypatch, tmp_path, arch="arm64-v8a", build_codes=HUSHFACEBOOK_CODES
+    )
+
+    assert _variant_page_fetched(fetched) == [f"https://www.apkmirror.com{_facebook_variant_href('13')}"]
+    assert warnings == []
+    assert not (tmp_path / "diagnostics").exists()
+
+
+async def test_download_apk_without_declared_codes_still_takes_the_default_variant(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(monkeypatch, tmp_path)
+
+    assert _variant_page_fetched(fetched) == [f"https://www.apkmirror.com{_facebook_variant_href('5')}"]
+    assert warnings == []
+
+
+async def test_download_apk_warns_when_none_of_the_declared_builds_is_listed(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(monkeypatch, tmp_path, build_codes={"ARM64_V8A": 111111111})
+
+    assert _variant_page_fetched(fetched) == [f"https://www.apkmirror.com{_facebook_variant_href('5')}"]
+    assert len(warnings) == 1
+    assert "ARM64_V8A=111111111" in warnings[0]
+    assert "arm64-v8a" in warnings[0]
+    assert len(list((tmp_path / "diagnostics").glob("no-declared-build-facebook-*.html"))) == 1
+
+
+async def test_download_apk_follows_the_arch_it_is_given(monkeypatch, tmp_path):
+    fetched, _ = await _download_facebook(
+        monkeypatch, tmp_path, arch="armeabi-v7a", build_codes=HUSHFACEBOOK_CODES
+    )
+
+    assert _variant_page_fetched(fetched) == [f"https://www.apkmirror.com{_facebook_variant_href('11')}"]
+
+
+async def test_download_apk_force_build_still_overrides_the_declared_build(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(
+        monkeypatch, tmp_path, force_build="475417102", build_codes=HUSHFACEBOOK_CODES
+    )
+
+    assert _variant_page_fetched(fetched) == [f"https://www.apkmirror.com{_facebook_variant_href('3')}"]
+    assert len(warnings) == 1
+    assert "force_build" in warnings[0]
+    assert not (tmp_path / "diagnostics").exists()

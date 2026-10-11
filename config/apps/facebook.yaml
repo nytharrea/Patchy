@@ -9,7 +9,6 @@ apk_source:
 builds:
   - key: "facebook"
     bundles: ["hushfacebook"]
-    force_build: "240-640dpi"
     enable:
       - "Stop Story auto-advance"
       - "Tag suggestions only after @"

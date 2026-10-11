@@ -4,6 +4,7 @@ import random
 import shutil
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 from .. import catalog
 from ..core import log, paths
@@ -11,7 +12,12 @@ from ..fetch import apkmirror, github
 from ..fetch.bundles import Tools
 from .patcher import list_versions, patch_apk
 from .verify import UnpinnedSignature, verify_apk_signature
-from .versions import extract_cli_versions, pick_latest_version
+from .versions import extract_cli_version_codes, extract_cli_versions, pick_latest_version
+
+
+class VersionChoice(NamedTuple):
+    version: str
+    build_codes: dict[str, int]
 
 
 def write_status(
@@ -38,20 +44,25 @@ def write_status(
         log.warn(f"Could not write status for {build_key}: {e}")
 
 
-async def _select_version(build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> str:
+async def _select_version(
+    build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]
+) -> VersionChoice:
     build = catalog.BUILDS[build_key]
     app_slug = build["app_slug"]
     source = build["apk_source"]
 
     selected_version = build.get("force_version")
+    build_codes_by_version: dict[str, dict[str, int]] = {}
 
-    if not selected_version:
+    if not selected_version or source["type"] == "apkmirror":
         try:
             output = await list_versions(cli_jar, bundle_paths, build["pkg"])
             if output is not None:
-                versions = extract_cli_versions(output, app_slug)
-                if versions:
-                    selected_version = pick_latest_version(versions)
+                build_codes_by_version = extract_cli_version_codes(output)
+                if not selected_version:
+                    versions = extract_cli_versions(output, app_slug)
+                    if versions:
+                        selected_version = pick_latest_version(versions)
         except Exception as e:
             log.warn(f"Could not fetch version list: {e}")
 
@@ -68,7 +79,7 @@ async def _select_version(build_key: str, cli_jar: str | Path, bundle_paths: Seq
     if not selected_version:
         raise RuntimeError("Could not determine a suitable version number.")
 
-    return selected_version
+    return VersionChoice(selected_version, build_codes_by_version.get(selected_version, {}))
 
 
 async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> dict | None:
@@ -78,10 +89,18 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
 
     log.header(f"PROCESSING: {app_slug.upper()}")
 
-    selected_version = await _select_version(build_key, cli_jar, bundle_paths)
+    selected = await _select_version(build_key, cli_jar, bundle_paths)
+    selected_version = selected.version
 
     if source["type"] == "apkmirror":
-        apk_path = await apkmirror.download_apk(selected_version, app_slug, source, build.get("force_build"))
+        apk_path = await apkmirror.download_apk(
+            selected_version,
+            app_slug,
+            source,
+            build.get("force_build"),
+            arch=build["arch"],
+            build_codes=selected.build_codes,
+        )
     elif source["type"] == "github":
         apk_path = await github.download_apk(selected_version, app_slug, source)
     else:
