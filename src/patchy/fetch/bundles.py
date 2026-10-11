@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from .. import catalog
 from ..catalog.models import Companion, CompanionVariant
@@ -120,7 +120,7 @@ def read_manifest(path: Path | None = None) -> Manifest:
 
     if not isinstance(data, dict) or not {"builds", "cli", "bundles"} <= set(data):
         raise ManifestError(f"Bundle manifest {source} is missing required keys (builds, cli, bundles).")
-    return data
+    return cast(Manifest, data)
 
 
 def resolve_tools(manifest: Manifest, tools_dir: Path | None = None) -> Tools:
