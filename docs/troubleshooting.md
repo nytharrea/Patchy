@@ -26,7 +26,11 @@ APKMirror kept challenging every attempt and FlareSolverr could not clear it. Th
 
 ## `Applying 0 patches`
 
-No patch in the selected bundles is compatible with the downloaded version. Pin a compatible version with `force_version` in the build, or wait for the bundle to support the new release.
+No patch in the selected bundles is compatible with the downloaded version. Pin a compatible version with `force_version` in the build, or wait for the bundle to support the new release. The `Executing command` line of the build log lists the bundle files that were passed to the patcher, and the tag of each bundle is in the plan job's log and in `bundles.json`.
+
+## `No APKMirror release page found for version <version>`
+
+APKMirror has no release page for that version. Patchy already tried the next versions the bundle supports (three at the most), so every one of them is missing, or the version is pinned with `force_version`. Check the app's page on APKMirror, run the build again once the upload is there, or pin another version.
 
 ## `None of the N arm64-v8a builds listed on APKMirror has a build code the patch bundle declares`
 

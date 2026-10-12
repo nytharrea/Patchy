@@ -7,12 +7,15 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .. import catalog
+from ..catalog.models import ApkMirrorSource, BuildConfig
 from ..core import log, paths
 from ..fetch import apkmirror, github
 from ..fetch.bundles import Tools
 from .patcher import list_versions, patch_apk
 from .verify import UnpinnedSignature, verify_apk_signature
-from .versions import extract_cli_version_codes, extract_cli_versions, pick_latest_version
+from .versions import extract_cli_version_codes, extract_cli_versions, rank_versions
+
+MAX_VERSION_ATTEMPTS = 3
 
 
 class VersionChoice(NamedTuple):
@@ -44,42 +47,66 @@ def write_status(
         log.warn(f"Could not write status for {build_key}: {e}")
 
 
-async def _select_version(
+async def _select_versions(
     build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]
-) -> VersionChoice:
+) -> list[VersionChoice]:
     build = catalog.BUILDS[build_key]
     app_slug = build["app_slug"]
     source = build["apk_source"]
 
-    selected_version = build.get("force_version")
+    forced_version = build.get("force_version")
+    ranked: list[str] = []
     build_codes_by_version: dict[str, dict[str, int]] = {}
 
-    if not selected_version or source["type"] == "apkmirror":
+    if not forced_version or source["type"] == "apkmirror":
         try:
             output = await list_versions(cli_jar, bundle_paths, build["pkg"])
             if output is not None:
                 build_codes_by_version = extract_cli_version_codes(output)
-                if not selected_version:
-                    versions = extract_cli_versions(output, app_slug)
-                    if versions:
-                        selected_version = pick_latest_version(versions)
+                if not forced_version:
+                    ranked = rank_versions(extract_cli_versions(output, app_slug))
         except Exception as e:
             log.warn(f"Could not fetch version list: {e}")
 
-    if not selected_version:
+    attempts = MAX_VERSION_ATTEMPTS if source["type"] == "apkmirror" else 1
+    versions = [forced_version] if forced_version else ranked[:attempts]
+
+    if not versions:
         if source["type"] == "apkmirror":
             latest = await apkmirror.get_latest_listing(app_slug, source)
             if latest and latest.get("version"):
-                selected_version = latest["version"]
+                versions = [latest["version"]]
         elif source["type"] == "github":
-            selected_version = "latest"
+            versions = ["latest"]
         else:
             raise RuntimeError(f"Unknown apk_source.type {source['type']!r} for build {build_key!r}")
 
-    if not selected_version:
+    if not versions:
         raise RuntimeError("Could not determine a suitable version number.")
 
-    return VersionChoice(selected_version, build_codes_by_version.get(selected_version, {}))
+    return [VersionChoice(version, build_codes_by_version.get(version, {})) for version in versions]
+
+
+async def _download_from_apkmirror(
+    build: BuildConfig, source: ApkMirrorSource, choices: list[VersionChoice]
+) -> tuple[str, VersionChoice]:
+    async def download(choice: VersionChoice) -> str:
+        return await apkmirror.download_apk(
+            choice.version,
+            build["app_slug"],
+            source,
+            build.get("force_build"),
+            arch=build["arch"],
+            build_codes=choice.build_codes,
+        )
+
+    for index, choice in enumerate(choices[:-1]):
+        try:
+            return await download(choice), choice
+        except apkmirror.ReleaseNotFound as e:
+            log.warn(f"{e}. Trying {choices[index + 1].version}, the next version the patch bundle supports.")
+
+    return await download(choices[-1]), choices[-1]
 
 
 async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> dict | None:
@@ -89,22 +116,17 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
 
     log.header(f"PROCESSING: {app_slug.upper()}")
 
-    selected = await _select_version(build_key, cli_jar, bundle_paths)
-    selected_version = selected.version
+    choices = await _select_versions(build_key, cli_jar, bundle_paths)
 
     if source["type"] == "apkmirror":
-        apk_path = await apkmirror.download_apk(
-            selected_version,
-            app_slug,
-            source,
-            build.get("force_build"),
-            arch=build["arch"],
-            build_codes=selected.build_codes,
-        )
+        apk_path, selected = await _download_from_apkmirror(build, source, choices)
     elif source["type"] == "github":
-        apk_path = await github.download_apk(selected_version, app_slug, source)
+        selected = choices[0]
+        apk_path = await github.download_apk(selected.version, app_slug, source)
     else:
         raise RuntimeError(f"Unknown apk_source.type {source['type']!r} for build {build_key!r}")
+
+    selected_version = selected.version
 
     await verify_apk_signature(apk_path, app_slug)
 

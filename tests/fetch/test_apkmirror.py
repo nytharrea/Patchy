@@ -591,6 +591,30 @@ async def test_resolve_list_url_surfaces_the_challenge_instead_of_pretending_the
         await client._resolve_list_url({"org": "acme-inc", "slug": "acme-app"}, "1.2.3")
 
 
+async def test_resolve_list_url_raises_release_not_found_when_apkmirror_has_no_page_for_the_version(
+    monkeypatch, tmp_path
+):
+    async def fake_fetch(url, label, **kwargs):
+        return Cleared(
+            url=url, status=200, html="<html><body>nothing here</body></html>", user_agent="", cookies=[]
+        )
+
+    monkeypatch.setattr(client, "_fetch", fake_fetch)
+    monkeypatch.setattr(client.paths, "diagnostics_dir", lambda: tmp_path / "diagnostics")
+
+    with pytest.raises(client.ReleaseNotFound, match="No APKMirror release page found for version 1.2338"):
+        await client._resolve_list_url({"org": "acme-inc", "slug": "acme-app"}, "1.2338")
+
+
+async def test_resolve_list_url_does_not_report_an_exhausted_budget_as_a_missing_release(monkeypatch):
+    monkeypatch.setattr(client, "RESOLVE_BUDGET_SECONDS", -1.0)
+
+    with pytest.raises(RuntimeError, match="Giving up") as exc_info:
+        await client._resolve_list_url({"org": "acme-inc", "slug": "acme-app"}, "1.2338")
+
+    assert not isinstance(exc_info.value, client.ReleaseNotFound)
+
+
 FACEBOOK_SITE = {"org": "facebook-2", "slug": "facebook"}
 FACEBOOK_LIST_URL = f"https://www.apkmirror.com{FACEBOOK_RELEASE}"
 

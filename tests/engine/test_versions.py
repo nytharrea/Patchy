@@ -2,7 +2,7 @@ from patchy.engine import versions as versions_module
 from patchy.engine.versions import (
     extract_cli_version_codes,
     extract_cli_versions,
-    pick_latest_version,
+    rank_versions,
     to_apkmirror_version,
 )
 
@@ -166,29 +166,46 @@ def test_extract_versions_empty_input():
     assert extract_cli_versions("") == []
 
 
-def test_pick_latest_version_prefers_higher_patch_count():
+def test_rank_versions_prefers_higher_patch_count():
     versions = [
         {"version": "1.2.2", "patches": 10},
         {"version": "1.2.4", "patches": 5},
     ]
-    assert pick_latest_version(versions) == "1.2.2"
+    assert rank_versions(versions) == ["1.2.2", "1.2.4"]
 
 
-def test_pick_latest_version_breaks_ties_numerically_not_lexically():
+def test_rank_versions_breaks_ties_numerically_not_lexically():
     versions = [
         {"version": "1.2.3", "patches": 5},
         {"version": "1.2.10", "patches": 5},
     ]
-    assert pick_latest_version(versions) == "1.2.10"
+    assert rank_versions(versions) == ["1.2.10", "1.2.3"]
 
 
-def test_pick_latest_version_empty_list():
-    assert pick_latest_version([]) is None
+def test_rank_versions_keeps_the_listed_order_for_identical_rankings():
+    versions = [
+        {"version": "1.2.3", "patches": 5},
+        {"version": "1.2.3-b", "patches": 5},
+    ]
+    assert rank_versions(versions) == ["1.2.3", "1.2.3-b"]
 
 
-def test_pick_latest_version_handles_unparseable_version_gracefully():
+def test_rank_versions_lists_every_version_best_first():
+    versions = [
+        {"version": "1.2338", "patches": 1},
+        {"version": "1.2337", "patches": 1},
+        {"version": "1.2300", "patches": 3},
+    ]
+    assert rank_versions(versions) == ["1.2300", "1.2338", "1.2337"]
+
+
+def test_rank_versions_empty_list():
+    assert rank_versions([]) == []
+
+
+def test_rank_versions_handles_unparseable_version_gracefully():
     versions = [{"version": "abc", "patches": 1}]
-    assert pick_latest_version(versions) == "abc"
+    assert rank_versions(versions) == ["abc"]
 
 
 def test_to_apkmirror_version_replaces_dots_with_dashes():

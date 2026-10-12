@@ -26,7 +26,7 @@ Only one run is active at a time (`concurrency: patchy-release`), because the re
 
 | Name | Contents | Kept |
 |---|---|---|
-| `patchy-tools` | Patcher jar and `.mpp` bundles | 1 day |
+| `patchy-tools` | Patcher jar and the `.mpp` bundles, one folder per bundle key | 1 day |
 | `patchy-manifest` | `bundles.json`: file names, tags, notes and the planned builds | 1 day |
 | `apk-<key>` | `<Name>-<version>.apk`, `status-<key>.json` | 1 day |
 | `diagnostics-<key>-<run id>` | Saved HTML of Cloudflare and parse failures | 7 days |

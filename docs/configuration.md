@@ -62,10 +62,14 @@ builds:
 | `exclude` | no | List of patch names passed as `--disable` |
 | `enable` | no | List of patch names passed as `--enable` |
 | `options` | no | Mapping of `"Patch name.optionKey"` to a value, passed as `-O` options |
-| `force_version` | no | Skip version discovery and fetch this version. The bundle's build codes for it are still looked up |
+| `force_version` | no | Skip version discovery and fetch exactly this version, even when its release page is missing. The bundle's build codes for it are still looked up |
 | `force_build` | no | Only consider APKMirror rows whose text contains this value, such as a build code or a density. Rarely needed, see [How the APKMirror variant is chosen](#how-the-apkmirror-variant-is-chosen) |
 
 When several builds of one app share a display name, the release file name gets a suffix taken from the first bundle's repository owner (or the build key when that is not unique).
+
+### How the version is chosen
+
+Patchy asks the patcher (`list-versions`) which versions the selected bundles support, ranks them by the number of patches that apply and then by version number, and downloads the first. A bundle can support a version before APKMirror lists it, or APKMirror can list it only as another kind of build (an F-Droid build, for example). When there is no release page for the chosen version, Patchy moves on to the next supported one, three at the most, and the log names the version it moved to. A version pinned with `force_version` is never replaced. When the bundles list no version at all, the newest release on APKMirror is used.
 
 ### How the APKMirror variant is chosen
 
@@ -95,6 +99,8 @@ bundles:
 ```
 
 `cli` is the patcher jar. Each entry under `bundles` is a repository whose newest release (prereleases included) ships a `.mpp` patch bundle. `label` appears in the release notes.
+
+Every bundle is stored in its own folder, `build/tools/bundles/<key>/`, so two repositories that publish a file with the same name (a fork that mirrors upstream's version number, for example `patches-1.47.0.mpp`) never overwrite each other.
 
 ## `config/companions.yaml`
 

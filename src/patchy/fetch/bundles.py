@@ -9,6 +9,8 @@ from ..catalog.models import Companion, CompanionVariant
 from ..core import log, paths
 from .github import ReleaseAsset, download_latest_release_asset
 
+BUNDLES_DIRNAME = "bundles"
+
 
 class ManifestEntry(TypedDict):
     name: str
@@ -39,6 +41,10 @@ def is_cli_asset(name: str) -> bool:
 
 def is_bundle_asset(name: str) -> bool:
     return name.endswith(".mpp")
+
+
+def bundle_dir(tools_dir: Path, key: str) -> Path:
+    return tools_dir / BUNDLES_DIRNAME / key
 
 
 def companion_matcher(variant: CompanionVariant) -> Callable[[str], bool]:
@@ -78,7 +84,7 @@ async def fetch_bundle(key: str, dest_dir: Path | None = None) -> ReleaseAsset:
         repo=source["repo"],
         prerelease=True,
         match=is_bundle_asset,
-        dest_dir=dest_dir,
+        dest_dir=bundle_dir(dest_dir or paths.tools_dir(), key),
     )
 
 
@@ -131,7 +137,7 @@ def resolve_tools(manifest: Manifest, tools_dir: Path | None = None) -> Tools:
 
     bundles: dict[str, Path] = {}
     for key, entry in manifest["bundles"].items():
-        path = directory / entry["name"]
+        path = bundle_dir(directory, key) / entry["name"]
         if not path.is_file():
             raise ManifestError(f"Bundle '{key}' listed in the manifest is missing on disk: {path}")
         bundles[key] = path

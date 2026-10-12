@@ -88,20 +88,17 @@ def _version_core(version: str) -> str:
     return version.split("-")[0]
 
 
-def pick_latest_version(versions: list[dict]) -> str | None:
-    if not versions:
-        return None
+def _rank_key(item: dict) -> tuple[int, tuple[int, ...]]:
+    parts = _version_core(item["version"]).split(".")
+    try:
+        core = tuple(int(p) for p in parts)
+    except ValueError:
+        core = (0,)
+    return (item["patches"], core)
 
-    def sort_key(item: dict):
-        parts = _version_core(item["version"]).split(".")
-        try:
-            core = tuple(int(p) for p in parts)
-        except ValueError:
-            core = (0,)
-        return (item["patches"], core)
 
-    best = max(versions, key=sort_key)
-    return best["version"]
+def rank_versions(versions: list[dict]) -> list[str]:
+    return [item["version"] for item in sorted(versions, key=_rank_key, reverse=True)]
 
 
 def to_apkmirror_version(version: str) -> str:

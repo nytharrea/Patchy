@@ -46,6 +46,10 @@ class ApkMirrorSite(TypedDict):
 RESOLVE_BUDGET_SECONDS = 300.0
 
 
+class ReleaseNotFound(RuntimeError):
+    pass
+
+
 async def close_session() -> None:
     await flaresolverr.close_session()
 
@@ -171,7 +175,7 @@ async def _resolve_list_url(site: ApkMirrorSite, version: str) -> tuple[str, boo
 
     if last_cleared is not None:
         await _save_diagnostic_html(last_cleared.html, f"no-match-{site['slug']}")
-    raise RuntimeError(f"No APKMirror release page found for version {version}")
+    raise ReleaseNotFound(f"No APKMirror release page found for version {version}")
 
 
 async def _resolve_download_url(variant_url: str, variant_cleared: Cleared) -> tuple[str, Cleared]:

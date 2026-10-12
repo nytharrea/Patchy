@@ -3,7 +3,8 @@ import json
 import pytest
 
 from patchy import catalog
-from patchy.fetch import bundles
+from patchy.core import paths
+from patchy.fetch import bundles, github
 
 
 def _asset(name, tag="v1", body="notes", prerelease=False, path="x"):
@@ -71,9 +72,11 @@ async def test_fetch_all_downloads_the_cli_once_and_only_the_bundles_the_builds_
     monkeypatch.setattr(catalog, "CLI", {"owner": "MorpheApp", "repo": "morphe-desktop"})
 
     calls = []
+    destinations = {}
 
     async def fake_download(owner, repo, match, prerelease=False, dest_dir=None):
         calls.append((owner, repo, prerelease))
+        destinations[repo] = dest_dir
         if owner == "MorpheApp":
             assert match("morphe-desktop-v1.jar") is True
             assert match("morphe-desktop-v1.apk") is False
@@ -91,6 +94,9 @@ async def test_fetch_all_downloads_the_cli_once_and_only_the_bundles_the_builds_
     assert manifest["cli"]["name"] == "cli.jar"
     assert set(manifest["bundles"]) == {"src_a", "src_b"}
     assert manifest["bundles"]["src_a"]["body"] == "notes for patches-a"
+    assert destinations["morphe-desktop"] is None
+    assert destinations["patches-a"] == paths.tools_dir() / "bundles" / "src_a"
+    assert destinations["patches-b"] == paths.tools_dir() / "bundles" / "src_b"
 
     written = json.loads((tmp_path / "manifest" / "bundles.json").read_text())
     assert written == manifest
@@ -119,6 +125,57 @@ async def test_two_bundles_in_the_same_repo_both_still_get_a_call(monkeypatch, t
     await bundles.fetch_all(["one"])
 
     assert calls.count(("acme", "shared-repo")) == 2
+
+
+async def test_bundles_that_ship_the_same_asset_name_each_keep_their_own_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATCHY_BUILD_DIR", str(tmp_path))
+    monkeypatch.setattr(catalog, "BUILDS", {"one": {"bundles": ["upstream", "fork"]}})
+    monkeypatch.setattr(
+        catalog,
+        "BUNDLES",
+        {
+            "upstream": {"owner": "acme", "repo": "patches", "label": "U"},
+            "fork": {"owner": "someone", "repo": "patches", "label": "F"},
+        },
+    )
+    monkeypatch.setattr(catalog, "CLI", {"owner": "MorpheApp", "repo": "morphe-desktop"})
+
+    contents = {
+        "MorpheApp": b"cli jar" * 200,
+        "acme": b"the upstream bundle" * 100,
+        "someone": b"the fork, which has another size" * 100,
+    }
+
+    async def fake_release(owner, repo, prerelease=False, match=None):
+        name = "morphe-desktop-1.0-all.jar" if owner == "MorpheApp" else "patches-1.0.0.mpp"
+        return {
+            "tag_name": "v1.0.0",
+            "prerelease": False,
+            "body": f"notes from {owner}",
+            "assets": [
+                {
+                    "name": name,
+                    "size": len(contents[owner]),
+                    "browser_download_url": f"https://dl.test/{owner}/{name}",
+                }
+            ],
+        }
+
+    async def fake_download_file(url, output_path, expected_size=None):
+        output_path.write_bytes(contents[url.split("/")[3]])
+        return str(output_path)
+
+    monkeypatch.setattr(github, "fetch_latest_release", fake_release)
+    monkeypatch.setattr(github, "_download_file", fake_download_file)
+
+    manifest = await bundles.fetch_all(["one"])
+    tools = bundles.resolve_tools(manifest)
+
+    assert manifest["bundles"]["upstream"]["name"] == manifest["bundles"]["fork"]["name"] == "patches-1.0.0.mpp"
+    assert tools.bundles["upstream"] != tools.bundles["fork"]
+    assert tools.bundles["upstream"].read_bytes() == contents["acme"]
+    assert tools.bundles["fork"].read_bytes() == contents["someone"]
+    assert tools.cli.read_bytes() == contents["MorpheApp"]
 
 
 def _manifest(**overrides):
@@ -156,18 +213,30 @@ def test_read_manifest_rejects_missing_keys(tmp_path):
         bundles.read_manifest(path)
 
 
+def _put_bundle(tools_dir, key, name):
+    path = bundles.bundle_dir(tools_dir, key) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"mpp")
+    return path
+
+
+def test_bundle_dir_is_one_folder_per_bundle_key(tmp_path):
+    assert bundles.bundle_dir(tmp_path, "morphe") == tmp_path / "bundles" / "morphe"
+    assert bundles.bundle_dir(tmp_path, "hxreborn") != bundles.bundle_dir(tmp_path, "morphe")
+
+
 def test_resolve_tools_maps_manifest_names_to_files(tmp_path):
     (tmp_path / "cli.jar").write_bytes(b"jar")
-    (tmp_path / "morphe.mpp").write_bytes(b"mpp")
+    bundle = _put_bundle(tmp_path, "morphe", "morphe.mpp")
 
     tools = bundles.resolve_tools(_manifest(), tmp_path)
 
     assert tools.cli == tmp_path / "cli.jar"
-    assert tools.bundles == {"morphe": tmp_path / "morphe.mpp"}
+    assert tools.bundles == {"morphe": bundle}
 
 
 def test_resolve_tools_complains_when_the_cli_is_missing(tmp_path):
-    (tmp_path / "morphe.mpp").write_bytes(b"mpp")
+    _put_bundle(tmp_path, "morphe", "morphe.mpp")
     with pytest.raises(bundles.ManifestError, match="CLI jar"):
         bundles.resolve_tools(_manifest(), tmp_path)
 
