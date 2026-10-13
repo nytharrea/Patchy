@@ -80,6 +80,7 @@ jobs:
           path: build/tools
           if-no-files-found: error
           retention-days: 1
+          compression-level: 0
 
       - name: Upload manifest artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -186,6 +187,7 @@ jobs:
           path: build/out
           if-no-files-found: ignore
           retention-days: 1
+          compression-level: 0
 
       - name: Upload diagnostics
         if: always()

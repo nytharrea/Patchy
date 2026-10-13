@@ -132,6 +132,31 @@ async def test_sign_apk_aligns_signs_and_verifies_in_that_order(monkeypatch, tmp
     assert dest.read_bytes() == b"signed apk"
 
 
+async def test_sign_apk_records_how_long_each_stage_took(monkeypatch, tmp_path):
+    _install(monkeypatch, _Runner())
+    source = tmp_path / "YouTube-1.0.apk"
+    source.write_bytes(b"patched apk")
+    timings = {}
+
+    await signer.sign_apk(source, tmp_path / "signed" / "YouTube-1.0.apk", _creds(tmp_path), timings)
+
+    assert list(timings) == ["align", "sign", "verify"]
+    assert all(seconds >= 0 for seconds in timings.values())
+
+
+async def test_sign_apk_only_records_the_stages_that_finished(monkeypatch, tmp_path):
+    runner = _Runner({("apksigner", "sign"): Completed(1, "Failed to load signer\n")})
+    _install(monkeypatch, runner)
+    source = tmp_path / "YouTube-1.0.apk"
+    source.write_bytes(b"patched apk")
+    timings = {}
+
+    with pytest.raises(signer.SigningError):
+        await signer.sign_apk(source, tmp_path / "signed" / "YouTube-1.0.apk", _creds(tmp_path), timings)
+
+    assert list(timings) == ["align"]
+
+
 async def test_sign_apk_passes_the_passwords_only_through_a_minimal_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_TOKEN", "ghs_secret")
     runner = _Runner()

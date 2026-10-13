@@ -1,3 +1,5 @@
+import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -362,19 +364,168 @@ async def test_upload_with_replace_does_not_retry_other_errors(monkeypatch, tmp_
         await release.upload_with_replace({"id": 5, "upload_url": "u"}, path)
 
 
-async def test_upload_patched_apks_uploads_every_file(monkeypatch, tmp_path):
+async def test_upload_with_replace_reports_how_long_the_upload_took(monkeypatch, tmp_path):
+    path = _apk(tmp_path, content=b"x" * 2048)
+    messages = []
+
+    async def fake_get_assets(release_id):
+        return []
+
+    async def fake_upload(upload_url, file_path, asset_name):
+        return {"id": 1, "size": 2048}
+
+    monkeypatch.setattr(release, "get_assets", fake_get_assets)
+    monkeypatch.setattr(release, "_upload", fake_upload)
+    monkeypatch.setattr(release.log, "download", lambda msg: None)
+    monkeypatch.setattr(release.log, "info", messages.append)
+
+    await release.upload_with_replace({"id": 5, "upload_url": "u"}, path)
+
+    assert len(messages) == 1
+    assert "Uploaded YouTube-1.0.apk" in messages[0]
+    assert "MB/s" in messages[0]
+
+
+def _configure_uploads(monkeypatch, concurrency):
     monkeypatch.setattr(release.settings, "github_token", SecretStr("token"))
     monkeypatch.setattr(release.settings, "github_repository", "owner/repo")
+    monkeypatch.setattr(release.settings, "upload_concurrency", concurrency)
+    monkeypatch.setattr(release.log, "step", lambda msg: None)
+    monkeypatch.setattr(release.log, "info", lambda msg: None)
+
+
+def _apks(tmp_path, sizes):
+    paths = []
+    for name, size in sizes.items():
+        path = tmp_path / name
+        path.write_bytes(b"x" * size)
+        paths.append(str(path))
+    return paths
+
+
+async def test_upload_assets_uploads_every_file(monkeypatch, tmp_path):
+    _configure_uploads(monkeypatch, 3)
     uploaded = []
 
     async def fake_upload(rel, path):
         uploaded.append(path)
 
     monkeypatch.setattr(release, "upload_with_replace", fake_upload)
+    paths = _apks(tmp_path, {"a.apk": 1, "b.apk": 2, "c.apk": 3})
 
-    await release.upload_patched_apks({"id": 1}, ["a.apk", "b.apk", "c.apk"])
+    await release.upload_assets({"id": 1}, paths, [])
 
-    assert sorted(uploaded) == ["a.apk", "b.apk", "c.apk"]
+    assert sorted(uploaded) == sorted(paths)
+
+
+async def test_upload_assets_sends_the_largest_files_first(monkeypatch, tmp_path):
+    _configure_uploads(monkeypatch, 1)
+    uploaded = []
+
+    async def fake_upload(rel, path):
+        uploaded.append(Path(path).name)
+
+    monkeypatch.setattr(release, "upload_with_replace", fake_upload)
+    paths = _apks(tmp_path, {"small.apk": 10, "huge.apk": 4000, "medium.apk": 300, "large.apk": 900})
+
+    await release.upload_assets({"id": 1}, paths, [])
+
+    assert uploaded == ["huge.apk", "large.apk", "medium.apk", "small.apk"]
+
+
+async def test_upload_assets_never_runs_more_uploads_than_configured(monkeypatch, tmp_path):
+    _configure_uploads(monkeypatch, 3)
+    state = {"active": 0, "peak": 0}
+
+    async def fake_upload(rel, path):
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        for _ in range(4):
+            await asyncio.sleep(0)
+        state["active"] -= 1
+
+    monkeypatch.setattr(release, "upload_with_replace", fake_upload)
+    paths = _apks(tmp_path, {f"app{i}.apk": i + 1 for i in range(9)})
+
+    await release.upload_assets({"id": 1}, paths, [])
+
+    assert state["peak"] == 3
+
+
+async def test_upload_assets_shares_the_same_limit_with_companions(monkeypatch, tmp_path):
+    _configure_uploads(monkeypatch, 2)
+    state = {"active": 0, "peak": 0}
+
+    async def occupy():
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        for _ in range(4):
+            await asyncio.sleep(0)
+        state["active"] -= 1
+
+    async def fake_upload(rel, path):
+        await occupy()
+
+    async def fake_variant(rel, companion, variant):
+        await occupy()
+
+    monkeypatch.setattr(release, "upload_with_replace", fake_upload)
+    monkeypatch.setattr(release, "_upload_companion_variant", fake_variant)
+    paths = _apks(tmp_path, {f"app{i}.apk": i + 1 for i in range(5)})
+    companion = _companion([{"file": "MicroG.apk", "suffix": "a"}, {"file": "MicroG-NoIcon.apk", "suffix": "b"}])
+
+    await release.upload_assets({"id": 1}, paths, [companion])
+
+    assert state["peak"] == 2
+
+
+async def test_upload_assets_starts_the_companions_before_the_apks(monkeypatch, tmp_path):
+    _configure_uploads(monkeypatch, 1)
+    order = []
+
+    async def fake_upload(rel, path):
+        order.append(Path(path).name)
+
+    async def fake_variant(rel, companion, variant):
+        order.append(variant["file"])
+
+    monkeypatch.setattr(release, "upload_with_replace", fake_upload)
+    monkeypatch.setattr(release, "_upload_companion_variant", fake_variant)
+    paths = _apks(tmp_path, {"big.apk": 500, "small.apk": 5})
+    companion = _companion([{"file": "MicroG.apk", "suffix": "a"}, {"file": "MicroG-NoIcon.apk", "suffix": "b"}])
+
+    await release.upload_assets({"id": 1}, paths, [companion])
+
+    assert order == ["MicroG.apk", "MicroG-NoIcon.apk", "big.apk", "small.apk"]
+
+
+async def test_upload_assets_lets_a_failed_upload_fail_the_run(monkeypatch, tmp_path):
+    _configure_uploads(monkeypatch, 2)
+
+    async def fake_upload(rel, path):
+        if Path(path).name == "bad.apk":
+            raise RuntimeError("Upload failed for bad.apk (status=500)")
+
+    monkeypatch.setattr(release, "upload_with_replace", fake_upload)
+    paths = _apks(tmp_path, {"good.apk": 5, "bad.apk": 3})
+
+    with pytest.raises(RuntimeError, match="bad.apk"):
+        await release.upload_assets({"id": 1}, paths, [])
+
+
+async def test_upload_assets_reports_the_overall_speed(monkeypatch, tmp_path):
+    _configure_uploads(monkeypatch, 2)
+    messages = []
+    monkeypatch.setattr(release.log, "info", messages.append)
+
+    async def fake_upload(rel, path):
+        return {}
+
+    monkeypatch.setattr(release, "upload_with_replace", fake_upload)
+
+    await release.upload_assets({"id": 1}, _apks(tmp_path, {"a.apk": 5}), [])
+
+    assert any("Uploads finished" in m and "MB/s" in m for m in messages)
 
 
 def _companion(variants=None):
@@ -458,10 +609,8 @@ async def test_companion_already_on_the_release_is_not_uploaded_again(monkeypatc
     await release._upload_companion_variant({"id": 1}, companion, companion["variants"][0])
 
 
-async def test_upload_companions_handles_every_variant(monkeypatch):
-    monkeypatch.setattr(release.settings, "github_token", SecretStr("token"))
-    monkeypatch.setattr(release.settings, "github_repository", "owner/repo")
-    monkeypatch.setattr(release.log, "step", lambda msg: None)
+async def test_upload_assets_handles_every_companion_variant(monkeypatch):
+    _configure_uploads(monkeypatch, 4)
     seen = []
 
     async def fake_variant(rel, companion, variant):
@@ -470,12 +619,25 @@ async def test_upload_companions_handles_every_variant(monkeypatch):
     monkeypatch.setattr(release, "_upload_companion_variant", fake_variant)
 
     companion = _companion([{"file": "MicroG.apk", "suffix": "a"}, {"file": "MicroG-NoIcon.apk", "suffix": "b"}])
-    await release.upload_companions({"id": 1}, [companion])
+    await release.upload_assets({"id": 1}, [], [companion])
 
     assert sorted(seen) == ["MicroG-NoIcon.apk", "MicroG.apk"]
 
 
-async def test_upload_companions_with_nothing_to_do_is_a_noop(monkeypatch):
-    monkeypatch.setattr(release.settings, "github_token", SecretStr("token"))
+async def test_upload_assets_with_nothing_to_do_is_a_noop(monkeypatch):
+    _configure_uploads(monkeypatch, 4)
+
+    async def boom(rel, path):
+        raise AssertionError("nothing to upload")
+
+    monkeypatch.setattr(release, "upload_with_replace", boom)
+
+    await release.upload_assets({"id": 1}, [], [])
+
+
+async def test_upload_assets_requires_credentials(monkeypatch):
+    monkeypatch.setattr(release.settings, "github_token", SecretStr(""))
     monkeypatch.setattr(release.settings, "github_repository", "owner/repo")
-    await release.upload_companions({"id": 1}, [])
+
+    with pytest.raises(RuntimeError, match="GITHUB_TOKEN"):
+        await release.upload_assets({"id": 1}, [], [])

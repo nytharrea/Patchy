@@ -1,9 +1,11 @@
-import asyncio
 import json
+import time
+from functools import partial
 from pathlib import Path
 
 from .. import catalog
 from ..core import log, paths, toolchain
+from ..core.concurrency import run_limited
 from ..core.settings import settings
 from ..engine.signer import SigningError, load_credentials, sign_apk
 from ..fetch.bundles import Manifest, ManifestError, companions_for, read_manifest
@@ -16,11 +18,10 @@ from .assets import (
 from .release import (
     create_new_release,
     delete_other_releases,
-    upload_companions,
-    upload_patched_apks,
+    upload_assets,
 )
 
-SIGN_CONCURRENCY = 4
+MEGABYTE = 1024 * 1024
 
 
 def _write_signing_failure(build_key: str, reason: str) -> None:
@@ -28,6 +29,13 @@ def _write_signing_failure(build_key: str, reason: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     payload = {"build_key": build_key, "ok": False, "error": f"signing failed: {reason}"}
     (directory / f"status-{build_key}.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _signing_summary(source: Path, began: float, timings: dict[str, float]) -> str:
+    summary = f"{source.stat().st_size / MEGABYTE:.1f} MB, {time.monotonic() - began:.1f} s"
+    if timings:
+        summary += ": " + ", ".join(f"{stage} {seconds:.1f}" for stage, seconds in timings.items())
+    return summary
 
 
 async def run_sign() -> dict[str, str]:
@@ -48,19 +56,27 @@ async def run_sign() -> dict[str, str]:
     if creds is None:
         log.warn("Signing credentials are missing or incomplete (KS_PATH, KS_PASSWORD, KS_ALIAS, KEY_PASSWORD).")
 
-    semaphore = asyncio.Semaphore(SIGN_CONCURRENCY)
     fingerprints: dict[str, str] = {}
 
     async def _sign_one(apk: dict) -> None:
-        async with semaphore:
-            try:
-                fingerprints[apk["name"]] = await sign_apk(Path(apk["path"]), signed_dir / apk["name"], creds)
-                log.success(f"Signed and verified: {apk['name']}")
-            except SigningError as e:
-                log.error(f"Signing failed for {apk['name']}: {e}")
-                _write_signing_failure(apk["build_key"], str(e))
+        source = Path(apk["path"])
+        timings: dict[str, float] = {}
+        began = time.monotonic()
+        try:
+            fingerprints[apk["name"]] = await sign_apk(source, signed_dir / apk["name"], creds, timings)
+        except SigningError as e:
+            log.error(f"Signing failed for {apk['name']}: {e}")
+            _write_signing_failure(apk["build_key"], str(e))
+            return
+        log.success(f"Signed and verified: {apk['name']} ({_signing_summary(source, began, timings)})")
 
-    await asyncio.gather(*(_sign_one(apk) for apk in matched))
+    ordered = sorted(matched, key=lambda apk: Path(apk["path"]).stat().st_size, reverse=True)
+    started = time.monotonic()
+    await run_limited([partial(_sign_one, apk) for apk in ordered], settings.sign_concurrency)
+    log.info(
+        f"Signed {len(fingerprints)} of {len(matched)} APK(s) in {time.monotonic() - started:.0f} s "
+        f"(up to {settings.sign_concurrency} at once)."
+    )
 
     distinct = set(fingerprints.values())
     if len(distinct) == 1:
@@ -114,11 +130,8 @@ async def run_publish() -> bool:
     log.success(f"Release created: {release['tag_name']} (id={release['id']})")
 
     log.step(f"Uploading {len(matched)} patched APK(s) (up to {settings.upload_concurrency} at once)...")
-    await upload_patched_apks(release, [apk["path"] for apk in matched])
-
     companions = companions_for(apk["build_key"] for apk in matched)
-    if companions:
-        await upload_companions(release, companions)
+    await upload_assets(release, [apk["path"] for apk in matched], companions)
 
     log.success("All apps successfully published under one release!")
 

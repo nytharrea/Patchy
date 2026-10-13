@@ -22,6 +22,17 @@ Only one run is active at a time (`concurrency: patchy-release`), because the re
 | `pin` | `contents: write` | Runs `patchy pin <app>` when the `pin` input is set |
 | `cleanup` | `actions: write` | Deletes workflow runs older than 30 days, keeping at least five |
 
+### Release speed
+
+The release job is bounded by hashing and copying a few gigabytes and by upload bandwidth, so it is tuned rather than serialized:
+
+- `patchy sign` signs up to `SIGN_CONCURRENCY` APKs at once (default 4, one per vCPU of a standard runner). Each APK goes through zipalign, `apksigner sign` and `apksigner verify`.
+- `patchy publish` uploads up to `UPLOAD_CONCURRENCY` assets at once (default 10). GitHub serves a single upload at roughly 30 MB/s, so a larger pool finishes sooner until the runner's own bandwidth is reached. Lower it if uploads start failing with 5xx or rate-limit answers.
+- Both stages start the largest file first, so the longest job never begins last and leaves the other slots idle at the end.
+- MicroG and PotHelper are fetched and uploaded in the same pool as the APKs, ahead of them, instead of after the last APK.
+- `apk-<key>` and `patchy-tools` are uploaded with `compression-level: 0`. APKs, jars and `.mpp` files are already compressed, so zipping them again only costs CPU time on both ends.
+- Every `Signed and verified` line shows the size, the total time and the time of the `align`, `sign` and `verify` stages, every `Uploaded` line shows its duration and MB/s, and each stage ends with a summary line. Compare those numbers between runs before changing the settings.
+
 ### Artifacts
 
 | Name | Contents | Kept |

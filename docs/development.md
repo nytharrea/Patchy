@@ -86,7 +86,8 @@ Matched case-insensitively by `core/settings.py`.
 | `APPS_DIR`, `BUNDLES_PATH`, `COMPANIONS_PATH` | Override the config locations |
 | `DISCORD_WEBHOOK_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `APPRISE_URLS` | Notifications |
 | `RELEASE_TAG`, `RELEASE_NAME` | Set from the plan job's outputs; required by `patchy publish` |
-| `UPLOAD_CONCURRENCY` | Parallel asset uploads (default 6) |
+| `SIGN_CONCURRENCY` | APKs signed at once by `patchy sign` (default 4) |
+| `UPLOAD_CONCURRENCY` | Release assets uploaded at once by `patchy publish`, companions included (default 10) |
 | `PATCHY_BUILD_DIR` | Relocate `build/` |
 | `NO_COLOR`, `GITHUB_ACTIONS` | Console colors and GitHub annotation output |
 

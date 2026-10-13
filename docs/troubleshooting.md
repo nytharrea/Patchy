@@ -60,6 +60,10 @@ The runner has no Android SDK build-tools. GitHub-hosted images include them; fo
 
 Companions are only uploaded when a build listed in their `for_builds` was published in the same run, and only if the companion repositories still ship an asset matching the configured `suffix`. Check `config/companions.yaml` and the `release` job log.
 
+## Uploads fail with a 5xx or a rate-limit answer
+
+Too many assets were being uploaded at the same time. Set `UPLOAD_CONCURRENCY` to a lower number (6 was the previous default) in the `Create release and clean up old releases` step's `env:`. A failed upload fails the run, so run the workflow again.
+
 ## Old releases were not removed
 
 Only releases whose tag starts with `build-` are removed, and a failed deletion is logged without failing the run. Check the `release` job log for the exact API response.

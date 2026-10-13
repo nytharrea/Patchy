@@ -11,7 +11,6 @@ builds:
     bundles: ["piko"]
   - key: "instagram-hushgram"
     bundles: ["hushgram"]
-    force_build: "385611438"
     display_name: "Instagram-HushGram"
     enable:
       - "Stop Story auto-advance"
@@ -24,3 +23,6 @@ builds:
       - "Hide the Reels tab"
       - "Download any video"
       - "Hide Reels in the feed"
+      - "Pure black dark mode"
+      - "Open developer options"
+      - "View DM photos and videos anonymously"

@@ -53,7 +53,8 @@ class Settings(BaseSettings):
 
     release_tag: str | None = None
     release_name: str | None = None
-    upload_concurrency: int = 6
+    sign_concurrency: int = Field(default=4, ge=1)
+    upload_concurrency: int = Field(default=10, ge=1)
 
 
 settings = Settings()

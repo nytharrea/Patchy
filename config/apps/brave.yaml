@@ -10,4 +10,3 @@ apk_source:
 builds:
   - key: "brave"
     bundles: ["dh6k"]
-    force_version: "1.92.140"

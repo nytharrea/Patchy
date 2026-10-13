@@ -1,4 +1,5 @@
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,19 +103,25 @@ async def verify_signed(apk: Path) -> str:
     return digests[0]
 
 
-async def sign_apk(source: Path, dest: Path, creds: Credentials | None) -> str:
+async def sign_apk(
+    source: Path, dest: Path, creds: Credentials | None, timings: dict[str, float] | None = None
+) -> str:
     if creds is None:
         raise SigningError(
             f"No signing credentials for {source.name}: the patcher's output is unsigned and cannot be "
             f"published as it is. Set the KEYSTORE_* secrets."
         )
 
+    stages = timings if timings is not None else {}
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     aligned = dest.with_name(dest.name + ".aligned")
     try:
+        began = time.monotonic()
         await align_apk(source, aligned)
+        stages["align"] = time.monotonic() - began
 
+        began = time.monotonic()
         try:
             apksigner = resolve_apksigner()
             env = clean_env({KS_PASSWORD_VAR: creds.ks_password, KEY_PASSWORD_VAR: creds.key_password})
@@ -126,8 +133,13 @@ async def sign_apk(source: Path, dest: Path, creds: Credentials | None) -> str:
 
         if result.returncode != 0:
             raise _failure(f"apksigner sign failed for {source.name}", result.output)
+        stages["sign"] = time.monotonic() - began
     finally:
         aligned.unlink(missing_ok=True)
 
     dest.with_name(dest.name + ".idsig").unlink(missing_ok=True)
-    return await verify_signed(dest)
+
+    began = time.monotonic()
+    fingerprint = await verify_signed(dest)
+    stages["verify"] = time.monotonic() - began
+    return fingerprint

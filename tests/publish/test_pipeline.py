@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -40,7 +41,7 @@ async def test_run_sign_signs_every_matched_apk_into_the_signed_directory(monkey
     creds = Credentials(tmp_path / "ks", "alias", "p1", "p2")
     signed = []
 
-    async def fake_sign(source, dest, credentials):
+    async def fake_sign(source, dest, credentials, timings=None):
         assert credentials is creds
         signed.append(source.name)
         dest.write_bytes(b"signed")
@@ -67,7 +68,7 @@ async def test_run_sign_prepares_the_toolchain_with_the_latest_build_tools(monke
         requested.append(install_latest)
         return {}
 
-    async def fake_sign(source, dest, credentials):
+    async def fake_sign(source, dest, credentials, timings=None):
         dest.write_bytes(b"signed")
         return FINGERPRINT
 
@@ -86,7 +87,7 @@ async def test_a_signing_failure_drops_only_that_app_and_leaves_a_reason_behind(
     _artifact(root, "apk-youtube", "YouTube-19.1.apk")
     _artifact(root, "apk-gboard", "Gboard-2.0.apk")
 
-    async def fake_sign(source, dest, credentials):
+    async def fake_sign(source, dest, credentials, timings=None):
         if source.name.startswith("Gboard"):
             raise SigningError("apksigner sign failed for Gboard-2.0.apk: bad keystore")
         dest.write_bytes(b"signed")
@@ -113,7 +114,7 @@ async def test_run_sign_warns_when_credentials_are_missing_but_still_runs(monkey
     monkeypatch.setattr(pipeline.log, "warn", warnings.append)
     seen = []
 
-    async def fake_sign(source, dest, credentials):
+    async def fake_sign(source, dest, credentials, timings=None):
         seen.append(credentials)
         dest.write_bytes(b"signed")
         return FINGERPRINT
@@ -148,7 +149,7 @@ async def test_run_sign_warns_when_apks_carry_different_certificates(monkeypatch
     warnings = []
     monkeypatch.setattr(pipeline.log, "warn", warnings.append)
 
-    async def fake_sign(source, dest, credentials):
+    async def fake_sign(source, dest, credentials, timings=None):
         dest.write_bytes(b"signed")
         return FINGERPRINT if source.name.startswith("YouTube") else "b" * 64
 
@@ -161,11 +162,113 @@ async def test_run_sign_warns_when_apks_carry_different_certificates(monkeypatch
     assert any("different signing certificates" in w for w in warnings)
 
 
+async def test_run_sign_signs_the_largest_apks_first(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    _quiet(monkeypatch)
+    monkeypatch.setattr(pipeline.settings, "sign_concurrency", 1)
+    _artifact(root, "apk-youtube", "YouTube-19.1.apk", b"y" * 300)
+    _artifact(root, "apk-gboard", "Gboard-2.0.apk", b"g" * 20)
+    _artifact(root, "apk-brave", "Brave-1.0.apk", b"b" * 9000)
+    _artifact(root, "apk-inshot", "InShot-1.0.apk", b"i" * 1200)
+    order = []
+
+    async def fake_sign(source, dest, credentials, timings=None):
+        order.append(source.name)
+        dest.write_bytes(b"signed")
+        return FINGERPRINT
+
+    monkeypatch.setattr(pipeline.toolchain, "prepare", _prepare_ok)
+    monkeypatch.setattr(pipeline, "load_credentials", lambda: None)
+    monkeypatch.setattr(pipeline, "sign_apk", fake_sign)
+
+    await pipeline.run_sign()
+
+    assert order == ["Brave-1.0.apk", "InShot-1.0.apk", "YouTube-19.1.apk", "Gboard-2.0.apk"]
+
+
+async def test_run_sign_never_signs_more_apks_at_once_than_configured(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    _quiet(monkeypatch)
+    monkeypatch.setattr(pipeline.settings, "sign_concurrency", 2)
+    for name in ("YouTube-1.apk", "Gboard-1.apk", "Brave-1.apk", "InShot-1.apk", "Reddit-1.apk", "Twitter-1.apk"):
+        _artifact(root, f"apk-{name}", name)
+    state = {"active": 0, "peak": 0}
+
+    async def fake_sign(source, dest, credentials, timings=None):
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        for _ in range(4):
+            await asyncio.sleep(0)
+        state["active"] -= 1
+        dest.write_bytes(b"signed")
+        return FINGERPRINT
+
+    monkeypatch.setattr(pipeline.toolchain, "prepare", _prepare_ok)
+    monkeypatch.setattr(pipeline, "load_credentials", lambda: None)
+    monkeypatch.setattr(pipeline, "sign_apk", fake_sign)
+
+    fingerprints = await pipeline.run_sign()
+
+    assert state["peak"] == 2
+    assert len(fingerprints) == 6
+
+
+async def test_run_sign_reports_the_time_of_every_signing_stage(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    _quiet(monkeypatch)
+    _artifact(root, "apk-youtube", "YouTube-19.1.apk", b"y" * 2048)
+    messages = []
+    monkeypatch.setattr(pipeline.log, "success", messages.append)
+    monkeypatch.setattr(pipeline.log, "info", messages.append)
+
+    async def fake_sign(source, dest, credentials, timings=None):
+        timings.update({"align": 1.5, "sign": 2.5, "verify": 0.5})
+        dest.write_bytes(b"signed")
+        return FINGERPRINT
+
+    monkeypatch.setattr(pipeline.toolchain, "prepare", _prepare_ok)
+    monkeypatch.setattr(pipeline, "load_credentials", lambda: None)
+    monkeypatch.setattr(pipeline, "sign_apk", fake_sign)
+
+    await pipeline.run_sign()
+
+    signed = next(m for m in messages if m.startswith("Signed and verified: YouTube-19.1.apk"))
+    assert "align 1.5, sign 2.5, verify 0.5" in signed
+    assert any(m.startswith("Signed 1 of 1 APK(s)") for m in messages)
+
+
+async def test_a_failed_apk_does_not_stop_the_others_from_being_signed(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    _quiet(monkeypatch)
+    monkeypatch.setattr(pipeline.settings, "sign_concurrency", 1)
+    _artifact(root, "apk-brave", "Brave-1.0.apk", b"b" * 900)
+    _artifact(root, "apk-youtube", "YouTube-19.1.apk", b"y" * 100)
+    signed = []
+
+    async def fake_sign(source, dest, credentials, timings=None):
+        if source.name.startswith("Brave"):
+            raise SigningError("apksigner sign failed for Brave-1.0.apk: out of space")
+        signed.append(source.name)
+        dest.write_bytes(b"signed")
+        return FINGERPRINT
+
+    monkeypatch.setattr(pipeline.toolchain, "prepare", _prepare_ok)
+    monkeypatch.setattr(pipeline, "load_credentials", lambda: None)
+    monkeypatch.setattr(pipeline, "sign_apk", fake_sign)
+
+    fingerprints = await pipeline.run_sign()
+
+    assert signed == ["YouTube-19.1.apk"]
+    assert list(fingerprints) == ["YouTube-19.1.apk"]
+    assert (root / "signed" / "status-brave.json").is_file()
+
+
 class _Recorder:
     def __init__(self):
         self.release_args = None
         self.uploaded = []
         self.companions = None
+        self.upload_calls = 0
         self.deleted_keep = None
         self.notifications = []
         self.delete_error = None
@@ -191,10 +294,9 @@ def _wire_publish(monkeypatch, recorder, manifest):
         recorder.release_args = (tag, name, body, draft)
         return {"id": 42, "tag_name": tag, "html_url": "https://github.com/owner/repo/releases/tag/x"}
 
-    async def fake_upload(rel, paths):
+    async def fake_upload(rel, paths, companions):
+        recorder.upload_calls += 1
         recorder.uploaded = list(paths)
-
-    async def fake_companions(rel, companions):
         recorder.companions = [c["key"] for c in companions]
 
     async def fake_delete(keep_id):
@@ -206,8 +308,7 @@ def _wire_publish(monkeypatch, recorder, manifest):
         recorder.notifications.append(text)
 
     monkeypatch.setattr(pipeline, "create_new_release", fake_create)
-    monkeypatch.setattr(pipeline, "upload_patched_apks", fake_upload)
-    monkeypatch.setattr(pipeline, "upload_companions", fake_companions)
+    monkeypatch.setattr(pipeline, "upload_assets", fake_upload)
     monkeypatch.setattr(pipeline, "delete_other_releases", fake_delete)
     monkeypatch.setattr(pipeline.notify, "notify", fake_notify)
 
@@ -234,6 +335,7 @@ async def test_run_publish_creates_the_release_uploads_and_cleans_up(monkeypatch
     assert "**Gboard** - `2.0`" in body
     assert "notes for" in body
     assert sorted(Path(p).name for p in recorder.uploaded) == ["Gboard-2.0.apk", "YouTube-19.1.apk"]
+    assert recorder.upload_calls == 1
     assert recorder.deleted_keep == 42
     assert len(recorder.notifications) == 1
     assert "https://github.com/owner/repo/releases/tag/x" in recorder.notifications[0]
@@ -258,7 +360,7 @@ async def test_run_publish_skips_companions_when_no_companion_build_succeeded(mo
 
     await pipeline.run_publish()
 
-    assert recorder.companions is None
+    assert recorder.companions == []
 
 
 async def test_run_publish_reports_failed_builds_with_their_reasons(monkeypatch, tmp_path):

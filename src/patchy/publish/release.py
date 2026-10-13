@@ -1,15 +1,19 @@
 import asyncio
+import time
+from functools import partial
 from pathlib import Path
 from urllib.parse import quote
 
 from ..catalog.models import Companion, CompanionVariant
 from ..catalog.plan import TAG_PREFIX
 from ..core import log
+from ..core.concurrency import Job, run_limited
 from ..core.http import github_headers, new_session
 from ..core.settings import settings
 from ..fetch.bundles import fetch_companion
 
 PAGE_SIZE = 100
+MEGABYTE = 1024 * 1024
 
 
 def _headers() -> dict[str, str]:
@@ -235,8 +239,9 @@ async def upload_with_replace(release: dict, file_path: str):
 
     await _delete_asset_by_name(release_id, asset_name)
 
-    log.download(f"Uploading: {asset_name} ({file_size / (1024 * 1024):.1f} MB)")
+    log.download(f"Uploading: {asset_name} ({file_size / MEGABYTE:.1f} MB)")
 
+    began = time.monotonic()
     for attempt in range(3):
         try:
             result = await _upload(release["upload_url"], file_path, asset_name)
@@ -257,19 +262,17 @@ async def upload_with_replace(release: dict, file_path: str):
         raise RuntimeError(f"Upload failed for {asset_name} after retries")
 
     uploaded_size = result.get("size", file_size)
-    log.info(f"✅ Uploaded {asset_name} ({uploaded_size / (1024 * 1024):.1f} MB, id={result.get('id')})")
+    seconds = max(time.monotonic() - began, 0.001)
+    uploaded_mb = uploaded_size / MEGABYTE
+    log.info(
+        f"✅ Uploaded {asset_name} ({uploaded_mb:.1f} MB, id={result.get('id')}, "
+        f"{seconds:.1f} s, {uploaded_mb / seconds:.0f} MB/s)"
+    )
     return result
 
 
-async def upload_patched_apks(release: dict, apk_paths: list[str]) -> None:
-    _assert_configured()
-    semaphore = asyncio.Semaphore(settings.upload_concurrency)
-
-    async def _upload_one(path: str) -> None:
-        async with semaphore:
-            await upload_with_replace(release, path)
-
-    await asyncio.gather(*(_upload_one(path) for path in apk_paths))
+def _file_size(path: str) -> int:
+    return Path(path).stat().st_size
 
 
 async def _upload_companion_variant(release: dict, companion: Companion, variant: CompanionVariant) -> None:
@@ -295,13 +298,27 @@ async def _upload_companion_variant(release: dict, companion: Companion, variant
     await upload_with_replace(release, str(new_path))
 
 
-async def upload_companions(release: dict, companions: list[Companion]) -> None:
+async def upload_assets(release: dict, apk_paths: list[str], companions: list[Companion]) -> None:
     _assert_configured()
-    jobs = [
-        _upload_companion_variant(release, companion, variant)
+
+    jobs: list[Job] = [
+        partial(_upload_companion_variant, release, companion, variant)
         for companion in companions
         for variant in companion["variants"]
     ]
     if jobs:
         log.step(f"Fetching companion app(s): {', '.join(c['key'] for c in companions)}...")
-    await asyncio.gather(*jobs)
+
+    ordered = sorted(apk_paths, key=_file_size, reverse=True)
+    jobs.extend(partial(upload_with_replace, release, path) for path in ordered)
+    if not jobs:
+        return
+
+    began = time.monotonic()
+    await run_limited(jobs, settings.upload_concurrency)
+
+    seconds = max(time.monotonic() - began, 0.001)
+    apk_mb = sum(_file_size(path) for path in ordered) / MEGABYTE
+    log.info(
+        f"Uploads finished in {seconds:.0f} s ({apk_mb:.0f} MB of APKs, {apk_mb / seconds:.0f} MB/s overall)."
+    )
