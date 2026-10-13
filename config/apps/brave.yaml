@@ -9,4 +9,4 @@ apk_source:
   release_slug: "brave-private-web-browser-vpn"
 builds:
   - key: "brave"
-    bundles: ["dh6k"]
+    bundles: ["kveld"]

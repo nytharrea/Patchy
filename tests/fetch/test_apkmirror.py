@@ -699,3 +699,147 @@ async def test_download_apk_force_build_still_overrides_the_declared_build(monke
     assert len(warnings) == 1
     assert "force_build" in warnings[0]
     assert not (tmp_path / "diagnostics").exists()
+
+
+DISCORD_SITE = {"org": "discord", "slug": "discord-chat-for-gamers", "release_slug": "discord-talk-play-hang-out"}
+DISCORD_VERSION = "348.10 - Stable"
+DISCORD_CODES = {"ARM64_V8A": 348010, "ARMEABI_V7A": 348010, "X86_64": 348010, "X86": 348010}
+DISCORD_FOLDER = "/apk/discord/discord-chat-for-gamers/"
+DISCORD_RELEASE = f"{DISCORD_FOLDER}discord-talk-play-hang-out-348-10-stable-release/"
+DISCORD_VARIANT = f"{DISCORD_RELEASE}discord-talk-play-hang-out-348-10-stable-android-apk-download/"
+DISCORD_RELEASE_URL = f"https://www.apkmirror.com{DISCORD_RELEASE}"
+DISCORD_VARIANT_URL = f"https://www.apkmirror.com{DISCORD_VARIANT}"
+DISCORD_LISTING_URL = f"https://www.apkmirror.com{DISCORD_FOLDER}"
+
+
+def _discord_table():
+    return f"""<html><body><div class="table topmargin variants-table">
+        <div class="table-row headerFont">
+          <div class="table-cell rowheight addseparator expand variant-min-width pad">Variant</div>
+          <div class="table-cell rowheight addseparator expand pad">Architecture</div>
+          <div class="table-cell rowheight addseparator expand pad">Minimum Version</div>
+          <div class="table-cell rowheight addseparator expand pad">Screen DPI</div>
+        </div>
+        <div class="table-row headerFont">
+          <div class="table-cell rowheight addseparator expand pad dowrap-break-all">
+            <a class="accent_color" href="{DISCORD_VARIANT}">
+              <svg class="icon tag-icon"><use xlink:href="#apkm-icon-tag"></use></svg>
+              348.10 - Stable</a>
+            <span class="apkm-badge success" data-apkm-tooltip="APK bundle with base APK and 32 splits">BUNDLE</span>
+            <span class="apkm-badge success" data-apkm-tooltip="32 splits">32 S</span>
+            <span class="bubble p-static inlineBlock"><a href="{DISCORD_VARIANT}#disqus_thread"></a></span>
+            <br><span class="colorLightBlack">348010</span>
+            <br><span class="colorLightBlack wrapText"><span class="dateyear_utc">October 6, 2026 GMT+0300</span></span>
+          </div>
+          <div class="table-cell rowheight addseparator expand pad dowrap">universal</div>
+          <div class="table-cell rowheight addseparator expand pad dowrap">Android 7.0+</div>
+          <div class="table-cell rowheight addseparator expand pad dowrap">120-640dpi</div>
+        </div>
+    </div></body></html>"""
+
+
+def _discord_listing():
+    releases = [
+        ("350-3-alpha", "350.3 - Alpha"),
+        ("349-8-beta", "349.8 - Beta"),
+        ("348-10-beta", "348.10 - Beta"),
+        ("348-10-stable", "348.10 - Stable"),
+        ("347-12-stable", "347.12 - Stable"),
+    ]
+    rows = "".join(
+        f'<div class="appRow"><a class="fontBlack" href="{DISCORD_FOLDER}discord-talk-play-hang-out-{slug}-release/">'
+        f"Talk, Play, Hang Out {title}</a></div>"
+        for slug, title in releases
+    )
+    return f"<html><body>{rows}</body></html>"
+
+
+def _serve_pages(monkeypatch, pages):
+    requested = []
+
+    async def fake_fetch(url, label, **kwargs):
+        requested.append((label, url))
+        found = url in pages
+        html = pages[url] if found else "<html><body>404 Whoops! The page could not be found</body></html>"
+        return Cleared(url=url, status=200 if found else 404, html=html, user_agent="", cookies=[])
+
+    monkeypatch.setattr(client, "_fetch", fake_fetch)
+    return requested
+
+
+def test_parse_variants_reads_the_universal_bundle_row_of_a_discord_release():
+    variants = parse_variants(parse(_discord_table()))
+
+    assert len(variants) == 1
+    variant = variants[0]
+    assert variant.href == DISCORD_VARIANT
+    assert variant.arch == "universal"
+    assert variant.min_android == "Android 7.0+"
+    assert variant.dpi == "120-640dpi"
+    assert variant.is_bundle is True
+    assert 348010 in variant.build_codes
+
+
+def test_select_variant_takes_the_universal_discord_bundle_by_the_build_code_the_patches_declare():
+    pick = select_variant(parse(_discord_table()), None, "discord", build_codes=DISCORD_CODES)
+
+    assert pick is not None
+    assert pick.variant.href == DISCORD_VARIANT
+    assert pick.basis == "target-build"
+    assert pick.matched_code == 348010
+
+
+async def test_resolve_list_url_builds_the_discord_release_slug_from_a_version_with_a_channel(monkeypatch):
+    requested = _serve_pages(monkeypatch, {DISCORD_RELEASE_URL: _discord_table()})
+
+    assert await client._resolve_list_url(DISCORD_SITE, DISCORD_VERSION) == (DISCORD_RELEASE_URL, False)
+    assert requested == [("direct-try", DISCORD_RELEASE_URL)]
+
+
+async def test_resolve_list_url_falls_back_to_the_single_discord_variant_page(monkeypatch):
+    variant_page = (
+        '<html><body><a class="downloadButton" href="/download/?key=1">Download APK Bundle</a></body></html>'
+    )
+    _serve_pages(monkeypatch, {DISCORD_VARIANT_URL: variant_page})
+
+    assert await client._resolve_list_url(DISCORD_SITE, DISCORD_VERSION) == (DISCORD_VARIANT_URL, True)
+
+
+async def test_resolve_list_url_finds_the_discord_release_in_the_app_listing(monkeypatch):
+    _serve_pages(monkeypatch, {DISCORD_LISTING_URL: _discord_listing()})
+
+    assert await client._resolve_list_url(DISCORD_SITE, DISCORD_VERSION) == (DISCORD_RELEASE_URL, False)
+
+
+async def test_download_apk_opens_the_variant_page_of_the_discord_bundle(monkeypatch, tmp_path):
+    requested = _serve_pages(
+        monkeypatch,
+        {
+            DISCORD_RELEASE_URL: _discord_table(),
+            DISCORD_VARIANT_URL: "<html><body>variant page</body></html>",
+        },
+    )
+    downloads = []
+
+    async def fake_resolve_download_url(variant_url, variant_cleared):
+        return "https://www.apkmirror.com/file", variant_cleared
+
+    async def fake_download_file(url, cleared, out_dir, fallback_name):
+        downloads.append((url, fallback_name))
+        path = out_dir / "discord.apkm"
+        path.write_bytes(b"x" * 2048)
+        return path
+
+    monkeypatch.setattr(client, "_resolve_download_url", fake_resolve_download_url)
+    monkeypatch.setattr(client.flaresolverr, "download_file", fake_download_file)
+    monkeypatch.setattr(client.paths, "downloads_dir", lambda: tmp_path)
+    monkeypatch.setattr(client.paths, "diagnostics_dir", lambda: tmp_path / "diagnostics")
+
+    path = await client.download_apk(
+        DISCORD_VERSION, "discord", DISCORD_SITE, arch="arm64-v8a", build_codes=DISCORD_CODES
+    )
+
+    assert path == str(tmp_path / "discord.apkm")
+    assert [url for label, url in requested if label == "variant-page"] == [DISCORD_VARIANT_URL]
+    assert downloads == [("https://www.apkmirror.com/file", "discord.apk")]
+    assert not (tmp_path / "diagnostics").exists()

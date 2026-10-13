@@ -1,7 +1,10 @@
+import pytest
+
 from patchy.engine import versions as versions_module
 from patchy.engine.versions import (
     extract_cli_version_codes,
     extract_cli_versions,
+    file_name_version,
     rank_versions,
     to_apkmirror_version,
 )
@@ -214,3 +217,61 @@ def test_to_apkmirror_version_replaces_dots_with_dashes():
 
 def test_to_apkmirror_version_no_dots():
     assert to_apkmirror_version("19") == "19"
+
+
+def test_to_apkmirror_version_turns_a_version_with_a_channel_into_the_release_slug():
+    assert to_apkmirror_version("348.10 - Stable") == "348-10-stable"
+
+
+@pytest.mark.parametrize(
+    ("version", "slug"),
+    [
+        ("350.3 - Alpha", "350-3-alpha"),
+        ("1.2.3-Beta.1", "1-2-3-beta-1"),
+        ("  7.0 (123)  ", "7-0-123"),
+        ("", ""),
+    ],
+)
+def test_to_apkmirror_version_lowercases_and_collapses_every_separator(version, slug):
+    assert to_apkmirror_version(version) == slug
+
+
+def test_file_name_version_drops_the_spaces_around_a_channel():
+    assert file_name_version("348.10 - Stable") == "348.10-Stable"
+
+
+@pytest.mark.parametrize("version", ["19.35.36", "1.2337", "5.20.74.0", "1.0.0-beta", "v2.1.0", "1.0_rc1"])
+def test_file_name_version_leaves_an_ordinary_version_alone(version):
+    assert file_name_version(version) == version
+
+
+def test_file_name_version_never_leaves_a_space_or_a_path_separator():
+    assert file_name_version("1.0 / beta (2)") == "1.0-beta-2"
+
+
+DISCORD_OUTPUT = (
+    "INFO: Morphe data root: /opt/morphe-data (JAR-adjacent)\n"
+    "INFO: Package name: com.discord\n"
+    "Most common compatible versions:\n"
+    "\t348.10 - Stable [versionCodes: ARM64_V8A=348010, ARMEABI_V7A=348010, X86_64=348010, X86=348010] "
+    "(28 patches)\n\n"
+)
+
+
+def test_extract_cli_versions_keeps_the_channel_in_the_version():
+    assert extract_cli_versions(DISCORD_OUTPUT, "discord") == [{"version": "348.10 - Stable", "patches": 28}]
+
+
+def test_extract_cli_version_codes_reads_the_codes_of_a_version_with_a_channel():
+    assert extract_cli_version_codes(DISCORD_OUTPUT) == {
+        "348.10 - Stable": {"ARM64_V8A": 348010, "ARMEABI_V7A": 348010, "X86_64": 348010, "X86": 348010}
+    }
+
+
+def test_rank_versions_orders_versions_with_a_channel_by_patch_count_then_number():
+    versions = [
+        {"version": "348.9 - Beta", "patches": 28},
+        {"version": "348.10 - Stable", "patches": 28},
+        {"version": "349.2 - Alpha", "patches": 20},
+    ]
+    assert rank_versions(versions) == ["348.10 - Stable", "348.9 - Beta", "349.2 - Alpha"]

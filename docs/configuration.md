@@ -71,6 +71,8 @@ When several builds of one app share a display name, the release file name gets 
 
 Patchy asks the patcher (`list-versions`) which versions the selected bundles support, ranks them by the number of patches that apply and then by version number, and downloads the first. A bundle can support a version before APKMirror lists it, or APKMirror can list it only as another kind of build (an F-Droid build, for example). When there is no release page for the chosen version, Patchy moves on to the next supported one, three at the most, and the log names the version it moved to. A version pinned with `force_version` is never replaced. When the bundles list no version at all, the newest release on APKMirror is used.
 
+Some bundles list a version together with its release channel, for example `348.10 - Stable` for Discord. Patchy turns that text into the lowercase, dash-separated form APKMirror uses in release addresses (`discord-talk-play-hang-out-348-10-stable-release`) and writes it into the release file name without spaces (`Discord-348.10-Stable.apk`). `force_version` takes the text exactly as the patcher prints it.
+
 ### How the APKMirror variant is chosen
 
 One APKMirror release often lists many variants of the same version: several CPU architectures, different minimum Android levels and screen densities, each with its own build code (Android's `versionCode`). A patch bundle is written against specific builds, so a wrong variant downloads fine and then fails to patch. Patchy applies the same rule as Morphe Manager:

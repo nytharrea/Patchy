@@ -51,6 +51,28 @@ def test_all_five_tiktok_builds_share_app_level_fields():
     assert len({tuple(b["bundles"]) for b in builds}) == 5
 
 
+def test_brave_and_the_tiktok_kveld_build_use_the_same_kveld_bundle():
+    assert catalog.BUILDS["brave"]["bundles"] == ["kveld"]
+    assert catalog.BUILDS["tiktok-kveld"]["bundles"] == ["kveld", "morphe"]
+    assert catalog.BUNDLES["kveld"] == {"owner": "kveld9", "repo": "kveld-morphe-patches", "label": "🌙 Kveld"}
+
+
+def test_discord_is_built_from_the_venus_bundle_through_apkmirror():
+    discord = catalog.BUILDS["discord"]
+
+    assert discord["app_slug"] == "discord"
+    assert discord["pkg"] == "com.discord"
+    assert discord["bundles"] == ["venus"]
+    assert discord["apk_source"] == {
+        "type": "apkmirror",
+        "org": "discord",
+        "slug": "discord-chat-for-gamers",
+        "release_slug": "discord-talk-play-hang-out",
+    }
+    assert catalog.BUNDLES["venus"] == {"owner": "VenusIsJaded", "repo": "Venus-Patches", "label": "🪐 Venus"}
+    assert catalog.get_release_naming("discord") == ("Discord", None)
+
+
 def test_speedtest_build_combines_multiple_bundles_into_one_build():
     assert catalog.BUILDS["speedtest"]["bundles"] == ["rushi", "morphe"]
 

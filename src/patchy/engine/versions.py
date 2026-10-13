@@ -7,6 +7,8 @@ from ..core import log, paths
 _VERSION_LINE_RE = re.compile(r"^(.+?)(?:\s+\[([^\]]*)\])?\s+\((\d+)\s+patch(?:es)?\)$")
 _BUILD_CODES_LABEL_RE = re.compile(r"^\s*versionCodes\s*:\s*(.*)$", re.IGNORECASE)
 _BUILD_CODE_PAIR_RE = re.compile(r"([A-Za-z0-9_]+)\s*=\s*(\d+)")
+_SLUG_SEPARATORS = re.compile(r"[^0-9a-z]+")
+_FILE_NAME_UNSAFE = re.compile(r"[^0-9A-Za-z._+]+")
 
 
 class _Entry(NamedTuple):
@@ -102,4 +104,8 @@ def rank_versions(versions: list[dict]) -> list[str]:
 
 
 def to_apkmirror_version(version: str) -> str:
-    return version.replace(".", "-")
+    return _SLUG_SEPARATORS.sub("-", version.lower()).strip("-")
+
+
+def file_name_version(version: str) -> str:
+    return _FILE_NAME_UNSAFE.sub("-", version).strip("-")

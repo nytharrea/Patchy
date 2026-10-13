@@ -1,0 +1,12 @@
+pkg: "com.discord"
+display_name: "Discord"
+arch: "arm64-v8a"
+icon: "https://cdn.simpleicons.org/discord/5865F2"
+apk_source:
+  type: apkmirror
+  org: "discord"
+  slug: "discord-chat-for-gamers"
+  release_slug: "discord-talk-play-hang-out"
+builds:
+  - key: "discord"
+    bundles: ["venus"]

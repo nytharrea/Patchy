@@ -13,7 +13,7 @@ from ..fetch import apkmirror, github
 from ..fetch.bundles import Tools
 from .patcher import list_versions, patch_apk
 from .verify import UnpinnedSignature, verify_apk_signature
-from .versions import extract_cli_version_codes, extract_cli_versions, rank_versions
+from .versions import extract_cli_version_codes, extract_cli_versions, file_name_version, rank_versions
 
 MAX_VERSION_ATTEMPTS = 3
 
@@ -145,7 +145,7 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
 
     display_name, source_tag = catalog.get_release_naming(build_key)
     suffix = f"-{source_tag}" if source_tag else ""
-    final_name = f"{display_name}-{selected_version}{suffix}.apk"
+    final_name = f"{display_name}-{file_name_version(selected_version)}{suffix}.apk"
 
     out_dir = paths.out_dir()
     out_dir.mkdir(parents=True, exist_ok=True)

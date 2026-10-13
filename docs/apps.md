@@ -6,7 +6,8 @@ Several rows patch the same app from a different bundle (for example `tiktok` an
 
 | Build key | App slug | Package | Source | Bundle(s) |
 |---|---|---|---|---|
-| `brave` | `brave` | `com.brave.browser` | APKMirror | 🦁 dh6k |
+| `brave` | `brave` | `com.brave.browser` | APKMirror | 🌙 Kveld |
+| `discord` | `discord` | `com.discord` | APKMirror | 🪐 Venus |
 | `facebook` | `facebook` | `com.facebook.katana` | APKMirror | 📘 Hushfacebook |
 | `fairemail` | `fairemail` | `eu.faircode.email` | APKMirror | 💎 Heval |
 | `gboard` | `gboard` | `com.google.android.inputmethod.latin` | APKMirror | ⌨️ JasonWu Gboard |
@@ -42,6 +43,8 @@ Several rows patch the same app from a different bundle (for example `tiktok` an
 ## Notes
 
 - `instagram-hushgram` sets `force_build: "385611438"`, the one Instagram build code HushGram declares. Patchy now reads declared build codes from the patch bundle by itself (see [Configuration](configuration.md#how-the-apkmirror-variant-is-chosen)), so this pin is only a safety net and can be removed.
+- `discord` is patched with the Venus bundle, which targets exactly one release written as `348.10 - Stable`. APKMirror lists it as a single universal APK Bundle (`.apkm`), and Patchy follows the bundle's version, so a newer Venus release moves the build on by itself. Its release address uses the channel (`discord-talk-play-hang-out-348-10-stable-release`) and the file is named `Discord-348.10-Stable.apk`. The first run stops at the certificate pin, as for every new app.
+- `brave` and `tiktok-kveld` use the same `kveld` bundle (`kveld9/kveld-morphe-patches`), which is downloaded once per run. The `dh6k` bundle stays in `config/bundles.yaml` unused.
 
 ## Adding a new app
 

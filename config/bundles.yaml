@@ -73,7 +73,7 @@ bundles:
     repo: hushfeed
     label: "🤫 Hushfeed"
 
-  kveld-tiktok:
+  kveld:
     owner: kveld9
     repo: kveld-morphe-patches
     label: "🌙 Kveld"
@@ -102,3 +102,8 @@ bundles:
     owner: SysAdminDoc
     repo: HushGram
     label: "📸 HushGram"
+
+  venus:
+    owner: VenusIsJaded
+    repo: Venus-Patches
+    label: "🪐 Venus"

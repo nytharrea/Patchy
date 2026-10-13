@@ -189,6 +189,22 @@ async def test_process_build_adds_the_disambiguating_suffix_to_the_file_name(mon
     assert result["name"] == "The App-1.2.3-acme.apk"
 
 
+async def test_process_build_keeps_spaces_around_a_version_channel_out_of_the_file_name(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version="348.10 - Stable")
+
+    async def fake_download(version, app_slug, source, force_build, **kwargs):
+        return str(tmp_path / "downloaded.apk")
+
+    monkeypatch.setattr(apkmirror, "download_apk", fake_download)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["name"] == "The App-348.10-Stable.apk"
+    assert result["version"] == "348.10 - Stable"
+    assert (tmp_path / "build" / "out" / "The App-348.10-Stable.apk").is_file()
+
+
 async def test_process_build_returns_none_when_patch_apk_did_not_produce_a_file(monkeypatch, tmp_path):
     apk_source = {"type": "github", "owner": "acme-inc", "repo": "acme-app"}
     build_key = _common_mocks(monkeypatch, tmp_path, apk_source)

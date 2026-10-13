@@ -25,7 +25,7 @@ builds:
     force_version: ""
     enable: ["Disable Play Store updates"]
   - key: "tiktok-kveld"
-    bundles: ["kveld-tiktok", "morphe"]
+    bundles: ["kveld", "morphe"]
     force_version: ""
     enable: ["Disable Play Store updates"]
   - key: "tiktok-wake-old-hyphen"

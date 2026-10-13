@@ -19,6 +19,10 @@ def test_match_asset_simple_app():
     assert match_asset("YouTube-19.35.36.apk") == ("youtube", "YouTube", "19.35.36")
 
 
+def test_match_asset_reads_a_version_that_carries_a_channel():
+    assert match_asset("Discord-348.10-Stable.apk") == ("discord", "Discord", "348.10-Stable")
+
+
 def test_match_asset_prefix_collision_resolved_by_longest_match_first():
     assert match_asset("Reddit-Adobo-2024.15.0.apk") == ("reddit-adobo", "Reddit-Adobo", "2024.15.0")
 
