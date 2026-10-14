@@ -31,6 +31,24 @@ def _json(res) -> object:
         return {"message": (getattr(res, "text", "") or "")[:300] or f"HTTP {res.status_code}"}
 
 
+class ReleaseBodyRejected(RuntimeError):
+    pass
+
+
+def _body_rejected(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    errors = data.get("errors")
+    if not isinstance(errors, list):
+        return False
+    return any(isinstance(error, dict) and error.get("field") == "body" for error in errors)
+
+
+def _release_error(action: str, data: object) -> RuntimeError:
+    error_type = ReleaseBodyRejected if _body_rejected(data) else RuntimeError
+    return error_type(f"Failed to {action}: {data}")
+
+
 def _assert_configured():
     if not settings.github_token.get_secret_value():
         raise RuntimeError("Missing GITHUB_TOKEN")
@@ -78,7 +96,7 @@ async def create_new_release(tag: str, release_name: str, release_body: str = ""
             res = await client.patch(_api(f"/releases/{existing['id']}"), headers=_headers(), json=payload)
             data = _json(res)
         if not isinstance(data, dict) or "id" not in data:
-            raise RuntimeError(f"Failed to update existing release: {data}")
+            raise _release_error("update existing release", data)
         return data
 
     log.step(f"Creating new release: {tag}")
@@ -87,7 +105,7 @@ async def create_new_release(tag: str, release_name: str, release_body: str = ""
         data = _json(res)
 
     if not isinstance(data, dict) or "id" not in data:
-        raise RuntimeError(f"Failed to create release: {data}")
+        raise _release_error("create release", data)
 
     return data
 

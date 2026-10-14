@@ -234,3 +234,115 @@ def test_details_block_structure():
     assert block.startswith("\n<details>")
     assert "<summary>Label Release Notes (v1)</summary>" in block
     assert block.rstrip().endswith("</details>")
+
+
+SHORTENED = "shortened to fit GitHub's size limit"
+
+
+def _notes(label, text):
+    return assets.BundleNotes(label, "v1", f"https://example.test/{label}", text)
+
+
+def _manifest_with(body_for):
+    entry = {"name": "x.mpp", "tag": "v1.2.3", "prerelease": False}
+    bundles = {key: {**entry, "body": body_for(key)} for key in catalog.BUNDLES}
+    return {"builds": ["youtube"], "cli": {**entry, "body": ""}, "bundles": bundles}
+
+
+def test_release_body_does_not_touch_notes_that_fit():
+    body = build_release_body(_matched("youtube"), _manifest())
+
+    assert SHORTENED not in body
+    assert "Notes for morphe by maintainer" in body
+
+
+def test_release_body_stays_under_the_limit_when_the_bundle_notes_are_enormous():
+    manifest = _manifest_with(lambda key: "- a change\n" * 40_000)
+
+    body = build_release_body(_matched("youtube", "gboard", "brave"), manifest)
+
+    assert len(body) <= assets.RELEASE_BODY_LIMIT
+    assert body.count(SHORTENED) == 3
+    for key in ("morphe", "jasonwu", "kveld"):
+        bundle = catalog.BUNDLES[key]
+        assert f"https://github.com/{bundle['owner']}/{bundle['repo']}/releases/tag/v1.2.3" in body
+
+
+def test_release_body_keeps_small_notes_whole_when_another_bundle_is_huge():
+    manifest = _manifest_with(lambda key: "- a change\n" * 40_000 if key == "morphe" else f"Notes for {key}")
+
+    body = build_release_body(_matched("youtube", "gboard"), manifest)
+
+    assert len(body) <= assets.RELEASE_BODY_LIMIT
+    assert "Notes for jasonwu" in body
+    assert body.count(SHORTENED) == 1
+
+
+def test_release_body_closes_a_code_block_that_the_size_limit_cut_open():
+    manifest = _manifest_with(lambda key: "```\n" + "code line\n" * 5000 + "```\n")
+
+    body = build_release_body(_matched("youtube", "gboard"), manifest, limit=4000)
+
+    assert len(body) <= 4000
+    assert body.count("```") % 2 == 0
+
+
+def test_release_body_never_exceeds_even_an_absurdly_small_limit():
+    body = build_release_body(_matched("youtube", "gboard"), _manifest(), limit=200)
+
+    assert len(body) <= 200
+
+
+def test_notes_section_keeps_small_notes_whole_and_shortens_only_the_big_one():
+    small = "- small fix\n"
+    entries = [_notes("Small", small), _notes("Big", "- big entry\n" * 50_000)]
+
+    section = assets._notes_section(entries, 10_000)
+
+    assert len(section) <= 10_000
+    assert small in section
+    assert section.count(SHORTENED) == 1
+    assert "https://example.test/Big" in section
+    assert "https://example.test/Small" not in section
+
+
+def test_notes_section_gives_equally_large_notes_an_equal_share():
+    entries = [_notes(name, "- line\n" * 30_000) for name in ("A", "B", "C")]
+
+    section = assets._notes_section(entries, 30_000)
+
+    sizes = [len(part) for part in section.split("</details>")[:-1]]
+    assert len(sizes) == 3
+    assert sum(sizes) <= 30_000
+    assert max(sizes) - min(sizes) < 50
+
+
+def test_fair_shares_give_small_items_everything_and_split_the_rest_evenly():
+    assert assets._fair_shares([10, 100, 100], 130) == [10, 60, 60]
+    assert assets._fair_shares([5, 5], 100) == [5, 5]
+    assert assets._fair_shares([100, 100, 100], 100) == [33, 33, 34]
+    assert assets._fair_shares([50, 50], 0) == [0, 0]
+    assert assets._fair_shares([], 10) == []
+
+
+def test_cut_notes_leaves_text_that_fits_alone():
+    assert assets._cut_notes("short", 5) == "short"
+
+
+def test_cut_notes_cuts_between_lines_and_stays_within_the_room():
+    notes = "\n".join(f"line {i:03d}" for i in range(100))
+
+    cut = assets._cut_notes(notes, 100)
+
+    assert 0 < len(cut) <= 100
+    assert set(cut.split("\n")) <= set(notes.split("\n"))
+
+
+def test_cut_notes_closes_an_open_code_block_within_the_room():
+    notes = "intro\n```\n" + "code line\n" * 200 + "```\n"
+
+    cut = assets._cut_notes(notes, 300)
+
+    assert len(cut) <= 300
+    assert cut.endswith("\n```")
+    assert cut.count("```") % 2 == 0

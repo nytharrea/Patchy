@@ -18,7 +18,7 @@ Only one run is active at a time (`concurrency: patchy-release`), because the re
 |---|---|---|
 | `plan` | `contents: read` | Installs dependencies from `uv.lock`, runs `patchy plan` (validates config, writes `tag`, `name`, `matrix`) and `patchy fetch` (downloads the CLI and the bundles the selected builds need, writes `bundles.json`). Uploads `patchy-tools` and `patchy-manifest` |
 | `build` | `contents: read` | One runner per build, with a FlareSolverr service container. Runs `patchy build --app <key>` and uploads `apk-<key>` (unsigned APK and `status-<key>.json`) and diagnostics |
-| `release` | `contents: write`, `id-token`, `attestations`, `artifact-metadata` | Downloads every `apk-*` artifact, runs `patchy sign`, attests the signed APKs, runs `patchy publish`, then `patchy pin --collect` to record fingerprints that builds reported |
+| `release` | `contents: write`, `id-token`, `attestations`, `artifact-metadata` | Downloads every `apk-*` artifact, runs `patchy sign`, attests the signed APKs, runs `patchy publish`, keeps the signed APKs as `signed-apks` if a step failed, then runs `patchy pin --collect` to record fingerprints that builds reported |
 | `pin` | `contents: write` | Runs `patchy pin <app>` when the `pin` input is set |
 | `cleanup` | `actions: write` | Deletes workflow runs older than 30 days, keeping at least five |
 
@@ -39,10 +39,21 @@ The release job is bounded by hashing and copying a few gigabytes and by upload 
 |---|---|---|
 | `patchy-tools` | Patcher jar and the `.mpp` bundles, one folder per bundle key | 1 day |
 | `patchy-manifest` | `bundles.json`: file names, tags, notes and the planned builds | 1 day |
-| `apk-<key>` | `<Name>-<version>.apk`, `status-<key>.json` | 1 day |
+| `apk-<key>` | `<Name>-<version>.apk` (unsigned), `status-<key>.json` | 1 day |
+| `signed-apks` | Every signed APK, uploaded only when a step of the `release` job fails | 2 days |
 | `diagnostics-<key>-<run id>` | Saved HTML of Cloudflare and parse failures | 7 days |
 
+The APKs in `apk-<key>` are unsigned on purpose: build jobs never see the keystore, only the `release` job does. Android refuses to install them (`INSTALL_PARSE_FAILED_NO_CERTIFICATES`, or "Missing META-INF/MANIFEST.MF" in the package installer). Install the APKs from the release. If the release was not created because the job failed after signing, download them from `signed-apks` instead; it is one zip with all signed APKs.
+
 Release notes are taken from `bundles.json`, so they always describe the bundle versions that were actually used for the run.
+
+### Release description
+
+GitHub rejects a release description longer than 125,000 characters. `patchy publish` keeps it under 100,000:
+
+- The list of patched apps is always complete.
+- The notes of the patch bundles that were used share the remaining space evenly. A bundle whose notes fit is shown in full, a longer one is cut at a line break and ends with a link to its full notes on GitHub. A code block that the cut leaves open is closed.
+- If GitHub refuses the description anyway, the release is created without bundle notes and the log says so. The APKs are published as usual.
 
 ### Release cleanup
 

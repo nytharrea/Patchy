@@ -288,6 +288,17 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           APPRISE_URLS: ${{ secrets.APPRISE_URLS }}
 
+      - name: Keep the signed APKs when publishing fails
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: signed-apks
+          path: build/signed/*.apk
+          if-no-files-found: ignore
+          retention-days: 2
+          compression-level: 0
+
       - name: Record pending signature fingerprints
         if: always()
         run: uv run --no-sync patchy pin --collect build/artifacts

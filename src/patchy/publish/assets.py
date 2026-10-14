@@ -1,10 +1,22 @@
 import json
 import re
 from pathlib import Path
+from typing import NamedTuple
+from urllib.parse import quote
 
 from .. import catalog
 from ..core import log
 from ..fetch.bundles import Manifest
+
+RELEASE_BODY_LIMIT = 100_000
+CODE_FENCE = "```"
+
+
+class BundleNotes(NamedTuple):
+    label: str
+    tag: str
+    url: str
+    text: str
 
 
 def _asset_candidates() -> list[tuple[str, str, str | None]]:
@@ -111,7 +123,55 @@ def _details_block(label: str, tag: str, notes: str) -> str:
     return f"\n<details>\n<summary>{label} Release Notes ({tag})</summary>\n<br>\n\n{notes}\n\n</details>\n"
 
 
-def build_release_body(matched: list[dict], manifest: Manifest | None) -> str:
+def _release_url(key: str, tag: str) -> str:
+    bundle = catalog.BUNDLES[key]
+    return f"https://github.com/{bundle['owner']}/{bundle['repo']}/releases/tag/{quote(tag)}"
+
+
+def _shortened_notice(url: str) -> str:
+    return f"\n\n_These notes were shortened to fit GitHub's size limit. Full notes: {url}_"
+
+
+def _cut_notes(notes: str, room: int) -> str:
+    if len(notes) <= room:
+        return notes
+    cut = notes[: max(room - len(CODE_FENCE) - 1, 0)]
+    newline = cut.rfind("\n")
+    if newline > 0:
+        cut = cut[:newline]
+    cut = cut.rstrip()
+    if cut.count(CODE_FENCE) % 2:
+        cut += f"\n{CODE_FENCE}"
+    return cut
+
+
+def _fair_shares(sizes: list[int], budget: int) -> list[int]:
+    shares = [0] * len(sizes)
+    remaining = max(budget, 0)
+    for turn, index in enumerate(sorted(range(len(sizes)), key=sizes.__getitem__)):
+        shares[index] = min(sizes[index], remaining // (len(sizes) - turn))
+        remaining -= shares[index]
+    return shares
+
+
+def _notes_section(entries: list[BundleNotes], budget: int) -> str:
+    blocks = [_details_block(entry.label, entry.tag, entry.text) for entry in entries]
+    if sum(len(block) for block in blocks) <= budget:
+        return "".join(blocks)
+
+    shares = _fair_shares([len(block) for block in blocks], budget)
+    section = ""
+    for entry, block, share in zip(entries, blocks, shares, strict=True):
+        if len(block) <= share:
+            section += block
+            continue
+        notice = _shortened_notice(entry.url)
+        room = share - (len(block) - len(entry.text)) - len(notice)
+        section += _details_block(entry.label, entry.tag, _cut_notes(entry.text, room) + notice)
+    return section
+
+
+def build_release_body(matched: list[dict], manifest: Manifest | None, limit: int = RELEASE_BODY_LIMIT) -> str:
     body = "### Latest Patched APKs\n\n"
     for apk in matched:
         icon = catalog.BUILDS[apk["build_key"]]["icon"]
@@ -124,11 +184,19 @@ def build_release_body(matched: list[dict], manifest: Manifest | None) -> str:
         for apk in matched:
             used.update(catalog.bundles_for(apk["build_key"]))
 
+        entries: list[BundleNotes] = []
         for key in sorted(used):
             entry = manifest["bundles"].get(key)
             if entry is None or key not in catalog.BUNDLES:
                 continue
             notes = neutralize_github_mentions(entry["body"] or "")
-            body += _details_block(catalog.BUNDLES[key]["label"], entry["tag"], notes)
+            entries.append(
+                BundleNotes(catalog.BUNDLES[key]["label"], entry["tag"], _release_url(key, entry["tag"]), notes)
+            )
+
+        body += _notes_section(entries, limit - len(body))
+
+    if len(body) > limit:
+        body = _cut_notes(body, limit)
 
     return neutralize_github_mentions(body)

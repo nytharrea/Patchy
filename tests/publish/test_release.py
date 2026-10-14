@@ -232,6 +232,73 @@ async def test_create_new_release_raises_with_the_api_message_on_failure(monkeyp
         await release.create_new_release("t", "Name")
 
 
+def _body_too_long():
+    return {
+        "message": "Validation Failed",
+        "errors": [
+            {
+                "resource": "Release",
+                "code": "custom",
+                "field": "body",
+                "message": "body is too long (maximum is 125000 characters)",
+            }
+        ],
+        "documentation_url": "https://docs.github.com/rest/releases/releases#create-a-release",
+        "status": "422",
+    }
+
+
+async def test_create_new_release_flags_a_description_that_github_refuses(monkeypatch):
+    def handler(method, url, **kwargs):
+        if method == "GET":
+            return _Response(404, {"message": "Not Found"})
+        return _Response(422, _body_too_long())
+
+    _configure(monkeypatch, handler)
+
+    with pytest.raises(release.ReleaseBodyRejected, match="body is too long"):
+        await release.create_new_release("t", "Name", "Body")
+
+
+async def test_a_refused_description_is_flagged_when_an_existing_release_is_updated_too(monkeypatch):
+    def handler(method, url, **kwargs):
+        if method == "GET":
+            return _Response(200, {"id": 5, "tag_name": "t"})
+        return _Response(422, _body_too_long())
+
+    _configure(monkeypatch, handler)
+
+    with pytest.raises(release.ReleaseBodyRejected, match="update existing release"):
+        await release.create_new_release("t", "Name", "Body")
+
+
+async def test_other_validation_errors_are_not_mistaken_for_a_refused_description(monkeypatch):
+    def handler(method, url, **kwargs):
+        if method == "GET":
+            return _Response(404, {"message": "Not Found"})
+        errors = [{"resource": "Release", "code": "already_exists", "field": "tag_name"}]
+        return _Response(422, {"message": "Validation Failed", "errors": errors})
+
+    _configure(monkeypatch, handler)
+
+    with pytest.raises(RuntimeError, match="Validation Failed") as caught:
+        await release.create_new_release("t", "Name", "Body")
+
+    assert not isinstance(caught.value, release.ReleaseBodyRejected)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [None, "body", [], {}, {"errors": "body"}, {"errors": [None, "body"]}, {"errors": [{"field": "tag_name"}]}],
+)
+def test_only_a_validation_error_on_the_body_field_counts_as_a_refused_description(data):
+    assert release._body_rejected(data) is False
+
+
+def test_a_validation_error_on_the_body_field_counts_as_a_refused_description():
+    assert release._body_rejected(_body_too_long()) is True
+
+
 async def test_get_assets_paginates(monkeypatch):
     pages = {1: [{"id": i, "name": f"a{i}"} for i in range(100)], 2: [{"id": 100, "name": "a100"}]}
     _configure(monkeypatch, lambda m, u, **k: _Response(200, pages[k["params"]["page"]]))

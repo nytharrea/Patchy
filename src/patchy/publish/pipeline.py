@@ -16,6 +16,7 @@ from .assets import (
     find_patched_apks,
 )
 from .release import (
+    ReleaseBodyRejected,
     create_new_release,
     delete_other_releases,
     upload_assets,
@@ -126,7 +127,13 @@ async def run_publish() -> bool:
     body = build_release_body(matched, manifest)
 
     log.step(f"Creating release: {release_tag}")
-    release = await create_new_release(release_tag, release_name, body, draft=False)
+    try:
+        release = await create_new_release(release_tag, release_name, body, draft=False)
+    except ReleaseBodyRejected as e:
+        log.warn(f"GitHub rejected the release description, publishing without the patch bundle notes: {e}")
+        release = await create_new_release(
+            release_tag, release_name, build_release_body(matched, None), draft=False
+        )
     log.success(f"Release created: {release['tag_name']} (id={release['id']})")
 
     log.step(f"Uploading {len(matched)} patched APK(s) (up to {settings.upload_concurrency} at once)...")

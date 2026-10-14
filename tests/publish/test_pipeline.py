@@ -7,6 +7,7 @@ import pytest
 from patchy import catalog
 from patchy.engine.signer import Credentials, SigningError
 from patchy.publish import pipeline
+from patchy.publish.release import ReleaseBodyRejected
 
 FINGERPRINT = "3d7a1223019aa39d9ea0e3436ab7c0896bfb4fb679f4de5fe7c23f326c8f994a"
 
@@ -435,6 +436,76 @@ async def test_run_publish_works_without_a_manifest_but_leaves_out_bundle_notes(
     assert await pipeline.run_publish() is True
 
     assert "<details>" not in recorder.release_args[2]
+
+
+async def test_run_publish_keeps_the_description_under_githubs_limit_however_long_the_notes_are(
+    monkeypatch, tmp_path
+):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    manifest = _manifest(["youtube", "gboard"])
+    for entry in manifest["bundles"].values():
+        entry["body"] = "- a change\n" * 40_000
+    _wire_publish(monkeypatch, recorder, manifest)
+    _signed(root, "YouTube-19.1.apk")
+    _signed(root, "Gboard-2.0.apk")
+
+    assert await pipeline.run_publish() is True
+
+    body = recorder.release_args[2]
+    assert len(body) < 125_000
+    assert "shortened to fit GitHub's size limit" in body
+    assert recorder.upload_calls == 1
+
+
+async def test_run_publish_retries_without_bundle_notes_when_github_still_refuses_the_description(
+    monkeypatch, tmp_path
+):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    _signed(root, "YouTube-19.1.apk")
+    bodies = []
+    warnings = []
+    monkeypatch.setattr(pipeline.log, "warn", warnings.append)
+
+    async def fake_create(tag, name, body, draft=False):
+        bodies.append(body)
+        if len(bodies) == 1:
+            raise ReleaseBodyRejected("Failed to create release: body is too long")
+        return {"id": 42, "tag_name": tag, "html_url": "https://github.com/owner/repo/releases/tag/x"}
+
+    monkeypatch.setattr(pipeline, "create_new_release", fake_create)
+
+    assert await pipeline.run_publish() is True
+
+    assert len(bodies) == 2
+    assert "<details>" in bodies[0]
+    assert "<details>" not in bodies[1]
+    assert "**YouTube** - `19.1`" in bodies[1]
+    assert recorder.upload_calls == 1
+    assert recorder.deleted_keep == 42
+    assert any("rejected the release description" in w for w in warnings)
+
+
+async def test_run_publish_does_not_retry_when_the_release_fails_for_another_reason(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    _signed(root, "YouTube-19.1.apk")
+    attempts = []
+
+    async def fake_create(tag, name, body, draft=False):
+        attempts.append(body)
+        raise RuntimeError("Failed to create release: Bad credentials")
+
+    monkeypatch.setattr(pipeline, "create_new_release", fake_create)
+
+    with pytest.raises(RuntimeError, match="Bad credentials"):
+        await pipeline.run_publish()
+
+    assert len(attempts) == 1
+    assert recorder.upload_calls == 0
 
 
 async def test_run_publish_requires_the_release_tag_and_name(monkeypatch, tmp_path):

@@ -56,6 +56,18 @@ The message ends with `apksigner`'s own output. The usual causes are a wrong `KE
 
 The runner has no Android SDK build-tools. GitHub-hosted images include them; for other runners install the build-tools and set `ANDROID_HOME`, or set `APKSIGNER` to the binary.
 
+## An APK from the Artifacts list will not install
+
+`apk-<key>` artifacts are unsigned on purpose, because signing happens only in the `release` job, where the keystore is available. The installer answers `INSTALL_PARSE_FAILED_NO_CERTIFICATES` or "Missing META-INF/MANIFEST.MF". Use the APKs of the release. When the `release` job failed after signing, the signed files are kept for two days in the `signed-apks` artifact of the same run.
+
+## `Failed to create release: ... body is too long (maximum is 125000 characters)`
+
+The release description, which contains the notes of every patch bundle that was used, was longer than GitHub accepts. Current versions of Patchy shorten the notes themselves, see [Release description](workflows.md#release-description), so this message means the workflow is running an older copy of Patchy. A run that failed with it is not repaired by re-running it, because a re-run uses the commit of the original run. Start a new run after updating the repository.
+
+## Release was created without the patch bundle notes
+
+GitHub refused the description even after it was shortened. The warning `GitHub rejected the release description` in the `release` job log contains GitHub's answer. The APKs are published normally, and the notes of each bundle are on its own releases page.
+
 ## Release was created without MicroG or PotHelper
 
 Companions are only uploaded when a build listed in their `for_builds` was published in the same run, and only if the companion repositories still ship an asset matching the configured `suffix`. Check `config/companions.yaml` and the `release` job log.
