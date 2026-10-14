@@ -1,4 +1,5 @@
 import pytest
+from tenacity import wait_none
 
 from patchy.fetch import github
 
@@ -59,6 +60,7 @@ class _FakeResponse:
 class _FakeSession:
     def __init__(self, responses):
         self._responses = list(responses)
+        self.urls = []
 
     async def __aenter__(self):
         return self
@@ -67,6 +69,7 @@ class _FakeSession:
         return False
 
     async def get(self, url, headers=None):
+        self.urls.append(url)
         return self._responses.pop(0)
 
 
@@ -80,7 +83,7 @@ async def test_download_apk_uses_the_matching_tag_when_found(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(github, "new_session", lambda **kw: _FakeSession([tag_response]))
 
-    async def fake_download_asset(client, asset):
+    async def fake_download_asset(asset):
         return str(tmp_path / asset["name"])
 
     monkeypatch.setattr(github, "_download_asset", fake_download_asset)
@@ -97,7 +100,7 @@ async def test_download_apk_falls_back_to_latest_when_tag_not_found(monkeypatch)
     )
     monkeypatch.setattr(github, "new_session", lambda **kw: _FakeSession([tag_missing, latest_ok]))
 
-    async def fake_download_asset(client, asset):
+    async def fake_download_asset(asset):
         return "downloaded"
 
     monkeypatch.setattr(github, "_download_asset", fake_download_asset)
@@ -116,6 +119,115 @@ async def test_download_apk_raises_when_no_matching_asset_in_release(monkeypatch
     monkeypatch.setattr(github, "new_session", lambda **kw: _FakeSession([empty_release]))
     with pytest.raises(RuntimeError, match="No .apk or .apkm file found"):
         await github.download_apk("latest", "inure-github", SOURCE)
+
+
+BRAVE_SOURCE = {
+    "owner": "brave",
+    "repo": "brave-browser",
+    "asset_hint": "BraveMonoarm64",
+    "tag_template": "v{version}",
+}
+
+BRAVE_ASSETS = [
+    {"name": "Bravearm.apk", "size": 300},
+    {"name": "Bravearm64.apk", "size": 310},
+    {"name": "Bravearm64Universal.apk", "size": 320},
+    {"name": "BraveMonoarm.apk", "size": 330},
+    {"name": "BraveMonoarm64.apk", "size": 340},
+    {"name": "Bravex64.apk", "size": 350},
+    {"name": "brave-v1.97.56-linux-amd64.zip", "size": 360},
+]
+
+
+def test_build_tag_adds_the_v_prefix_that_brave_release_tags_use():
+    assert github._build_tag("v{version}", "1.97.56") == "v1.97.56"
+    assert github._build_tag("v{version}", "v1.97.56") == "v1.97.56"
+
+
+def test_pick_apk_asset_selects_the_monolithic_arm64_build_for_brave():
+    assert github._pick_apk_asset(BRAVE_ASSETS, "BraveMonoarm64")["name"] == "BraveMonoarm64.apk"
+
+
+async def test_download_apk_requests_the_brave_release_tag_and_downloads_the_mono_apk(monkeypatch):
+    assets = [dict(asset, browser_download_url="https://x/" + asset["name"]) for asset in BRAVE_ASSETS]
+    session = _FakeSession([_FakeResponse(200, {"assets": assets})])
+    monkeypatch.setattr(github, "new_session", lambda **kw: session)
+    downloaded = []
+
+    async def fake_download_asset(asset):
+        downloaded.append(asset["name"])
+        return "downloaded"
+
+    monkeypatch.setattr(github, "_download_asset", fake_download_asset)
+
+    assert await github.download_apk("1.97.56", "brave", BRAVE_SOURCE) == "downloaded"
+    assert session.urls == ["https://api.github.com/repos/brave/brave-browser/releases/tags/v1.97.56"]
+    assert downloaded == ["BraveMonoarm64.apk"]
+
+
+BRAVE_ASSET = {"name": "BraveMonoarm64.apk", "size": 4096, "browser_download_url": "https://x/BraveMonoarm64.apk"}
+
+
+async def test_download_asset_passes_the_expected_size_and_returns_the_saved_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(github.paths, "downloads_dir", lambda: tmp_path)
+    calls = []
+
+    async def fake_download(url, output_path, expected_size=None):
+        calls.append((url, output_path, expected_size))
+        output_path.write_bytes(b"x" * 4096)
+        return str(output_path)
+
+    monkeypatch.setattr(github, "_download_file", fake_download)
+
+    assert await github._download_asset(BRAVE_ASSET) == str(tmp_path / "BraveMonoarm64.apk")
+    assert calls == [("https://x/BraveMonoarm64.apk", tmp_path / "BraveMonoarm64.apk", 4096)]
+
+
+async def test_download_asset_retries_a_failed_download(monkeypatch, tmp_path):
+    monkeypatch.setattr(github.paths, "downloads_dir", lambda: tmp_path)
+    monkeypatch.setattr(github.retry_conf, "exponential_with_jitter", lambda **kwargs: wait_none())
+    attempts = []
+
+    async def flaky_download(url, output_path, expected_size=None):
+        attempts.append(url)
+        if len(attempts) < 3:
+            raise RuntimeError("connection reset")
+        output_path.write_bytes(b"x" * 4096)
+        return str(output_path)
+
+    monkeypatch.setattr(github, "_download_file", flaky_download)
+
+    assert await github._download_asset(BRAVE_ASSET) == str(tmp_path / "BraveMonoarm64.apk")
+    assert len(attempts) == 3
+
+
+async def test_download_asset_gives_up_after_five_failed_attempts(monkeypatch, tmp_path):
+    monkeypatch.setattr(github.paths, "downloads_dir", lambda: tmp_path)
+    monkeypatch.setattr(github.retry_conf, "exponential_with_jitter", lambda **kwargs: wait_none())
+    attempts = []
+
+    async def failing_download(url, output_path, expected_size=None):
+        attempts.append(url)
+        raise RuntimeError("HTTP 502")
+
+    monkeypatch.setattr(github, "_download_file", failing_download)
+
+    with pytest.raises(RuntimeError, match="HTTP 502"):
+        await github._download_asset(BRAVE_ASSET)
+    assert len(attempts) == 5
+
+
+async def test_download_asset_rejects_a_file_that_is_too_small(monkeypatch, tmp_path):
+    monkeypatch.setattr(github.paths, "downloads_dir", lambda: tmp_path)
+
+    async def error_page_download(url, output_path, expected_size=None):
+        output_path.write_bytes(b"<html>error</html>")
+        return str(output_path)
+
+    monkeypatch.setattr(github, "_download_file", error_page_download)
+
+    with pytest.raises(RuntimeError, match="too small"):
+        await github._download_asset(dict(BRAVE_ASSET, size=18))
 
 
 async def test_get_latest_listing_builds_releases_url():

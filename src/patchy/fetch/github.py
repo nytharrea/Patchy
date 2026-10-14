@@ -2,12 +2,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
-from curl_cffi.requests import AsyncSession
 from tenacity import retry, stop_after_attempt
 
 from ..core import log, paths
 from ..core import retry as retry_conf
 from ..core.http import github_headers, new_session
+from ..core.settings import settings
 
 
 class GithubAppSite(TypedDict):
@@ -85,7 +85,7 @@ async def _download_file(url: str, output_path: Path, expected_size: int | None 
     mode = "ab" if downloaded > 0 else "wb"
 
     async with (
-        new_session(follow_redirects=True, timeout=None) as client,
+        new_session(follow_redirects=True, timeout=settings.download_timeout) as client,
         client.stream("GET", url, headers=headers) as res,
     ):
         if res.status_code >= 400:
@@ -190,7 +190,7 @@ def _pick_apk_asset(assets: list[dict], name_hint: str | None = None) -> dict | 
     return arm64 or candidates[0]
 
 
-async def _download_asset(client: AsyncSession, asset: dict) -> str:
+async def _download_asset(asset: dict) -> str:
     size_mb = asset["size"] / (1024 * 1024)
     log.download(f"Found file to download: {asset['name']} ({size_mb:.2f} MB)")
 
@@ -200,14 +200,18 @@ async def _download_asset(client: AsyncSession, asset: dict) -> str:
 
     log.download("Downloading...")
 
-    async with client.stream("GET", asset["browser_download_url"]) as file_res:
-        if file_res.status_code >= 400:
-            raise RuntimeError("Failed to download file from GitHub!")
-        with open(file_path, "wb") as f:
-            async for chunk in file_res.aiter_content():
-                f.write(chunk)
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=retry_conf.exponential_with_jitter(max=30.0),
+        before_sleep=retry_conf.before_sleep("GitHub download"),
+        reraise=True,
+    )
+    async def _do():
+        await _download_file(asset["browser_download_url"], file_path, asset["size"])
 
-    downloaded_size = Path(file_path).stat().st_size
+    await _do()
+
+    downloaded_size = file_path.stat().st_size
     if downloaded_size < 1024:
         raise RuntimeError(f"Downloaded file is too small ({downloaded_size} bytes) - likely an error page")
 
@@ -249,7 +253,7 @@ async def download_apk(version: str, app_slug: str, source: GithubAppSite) -> st
             where = wanted_tag or "latest release"
             raise RuntimeError(f'No .apk or .apkm file found in "{owner}/{repo}" ({where}).')
 
-        return await _download_asset(client, asset)
+        return await _download_asset(asset)
 
 
 async def get_latest_listing(app_slug: str, source: GithubAppSite) -> dict:

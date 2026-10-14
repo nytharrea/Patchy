@@ -52,6 +52,8 @@ builds:
 | `apkmirror` | `org`, `slug`, optional `release_slug` | Scraped through the FlareSolverr sidecar. `release_slug` is needed only when release page URLs use a different word than the folder `slug` |
 | `github` | `owner`, `repo`, optional `asset_hint`, `tag_template` | Downloaded straight from a GitHub release; no FlareSolverr involved |
 
+For `github`, `tag_template` turns the version the patch bundle supports into the release tag: `{version}` is replaced, and the default is `{version}` itself, so `v{version}` gives `v1.97.56` for version `1.97.56`. `asset_hint` is a part of the asset file name, matched without regard to case, that picks one `.apk` or `.apkm` file among the several a release may carry; with no match the `arm64` file, or else the first file, is taken. When the tag does not exist the latest release is used. The download is retried up to five times, a partial file is resumed, and the size is checked against the one GitHub reports.
+
 ### Build fields
 
 | Field | Required | Meaning |

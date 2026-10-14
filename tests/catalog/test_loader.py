@@ -57,6 +57,20 @@ def test_brave_and_the_tiktok_kveld_build_use_the_same_kveld_bundle():
     assert catalog.BUNDLES["kveld"] == {"owner": "kveld9", "repo": "kveld-morphe-patches", "label": "🌙 Kveld"}
 
 
+def test_brave_downloads_the_single_file_github_apk_that_the_kveld_patches_target():
+    brave = catalog.BUILDS["brave"]
+
+    assert brave["app_slug"] == "brave"
+    assert brave["pkg"] == "com.brave.browser"
+    assert brave["apk_source"] == {
+        "type": "github",
+        "owner": "brave",
+        "repo": "brave-browser",
+        "asset_hint": "BraveMonoarm64",
+        "tag_template": "v{version}",
+    }
+
+
 def test_discord_is_built_from_the_venus_bundle_through_apkmirror():
     discord = catalog.BUILDS["discord"]
 
