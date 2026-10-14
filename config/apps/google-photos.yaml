@@ -9,11 +9,7 @@ apk_source:
   release_slug: "google-photos"
 builds:
   - key: "google-photos"
-    bundles: ["rushi"]
+    bundles: ["akash"]
     enable:
-      - "AMOLED dark theme"
-      - "Change package name"
-      - "Enable DCIM folders backup control"
-      - "Fix DCIM folder classification"
-      - "Spoof features"
-      - "GmsCore support"
+      - "Custom Morphe branding"
+      - "Disable Play Store updates"

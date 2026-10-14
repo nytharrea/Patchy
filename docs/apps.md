@@ -11,7 +11,7 @@ Several rows patch the same app from a different bundle (for example `tiktok` an
 | `facebook` | `facebook` | `com.facebook.katana` | APKMirror | 📘 Hushfacebook |
 | `fairemail` | `fairemail` | `eu.faircode.email` | APKMirror | 💎 Heval |
 | `gboard` | `gboard` | `com.google.android.inputmethod.latin` | APKMirror | ⌨️ JasonWu Gboard |
-| `google-photos` | `google-photos` | `com.google.android.apps.photos` | APKMirror | ⚡ Rushiranpise |
+| `google-photos` | `google-photos` | `com.google.android.apps.photos` | APKMirror | 📷 Akash-Sriram |
 | `inshot` | `inshot` | `com.camerasideas.instashot` | APKMirror | 🎬 Hooman's Patches |
 | `instagram` | `instagram` | `com.instagram.android` | APKMirror | ✖️ Piko |
 | `instagram-hushgram` | `instagram` | `com.instagram.android` | APKMirror | 📸 HushGram |

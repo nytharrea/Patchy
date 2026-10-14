@@ -107,3 +107,8 @@ bundles:
     owner: VenusIsJaded
     repo: Venus-Patches
     label: "🪐 Venus"
+
+  akash:
+    owner: Akash-Sriram
+    repo: morphe-google-photos
+    label: "📷 Akash-Sriram"
