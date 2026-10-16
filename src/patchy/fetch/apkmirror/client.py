@@ -1,7 +1,7 @@
 import asyncio
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
@@ -203,11 +203,17 @@ def _describe_declared_codes(build_codes: Mapping[str, int]) -> str:
     return ", ".join(f"{name}={code}" for name, code in build_codes.items())
 
 
+def _describe_accepted_codes(codes: Collection[int]) -> str:
+    return ", ".join(str(code) for code in sorted(codes))
+
+
 def _log_pick(pick: Pick, arch: str, force_build: str | None, build_codes: Mapping[str, int] | None) -> None:
     detail = pick.variant.describe(pick.matched_code)
     declared = _describe_declared_codes(build_codes) if build_codes else ""
 
-    if pick.basis == "target-build":
+    if pick.basis == "accepted-build":
+        log.info(f"   {detail} - a build code the patch accepts")
+    elif pick.basis == "target-build":
         log.info(f"   {detail} - the build code the patch bundle declares for {arch}")
     elif pick.basis == "declared-build":
         log.info(f"   {detail} - a build code the patch bundle declares for another architecture")
@@ -235,6 +241,7 @@ async def download_apk(
     *,
     arch: str = DEFAULT_ARCH,
     build_codes: Mapping[str, int] | None = None,
+    accepted_codes: Collection[int] | None = None,
 ) -> str:
     out_dir = paths.downloads_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -243,12 +250,21 @@ async def download_apk(
     log.info(f"LIST: {list_url}")
 
     if is_final:
+        if accepted_codes:
+            raise RuntimeError(
+                f"APKMirror lists only one build of {version}, and the patch does not accept it "
+                f"(it accepts {_describe_accepted_codes(accepted_codes)})."
+            )
         variant_url = list_url
         log.info(f"VARIANT: {variant_url} (single-variant release)")
     else:
         if build_codes:
             log.search(
                 f"Patch bundle declares build code(s) for {version}: {_describe_declared_codes(build_codes)}"
+            )
+        if accepted_codes:
+            log.search(
+                f"The patch accepts build code(s) for {version}: {_describe_accepted_codes(accepted_codes)}"
             )
 
         listing_base = f"https://www.apkmirror.com/apk/{site['org']}/{site['slug']}/"
@@ -258,7 +274,9 @@ async def download_apk(
             cleared = await _fetch(list_url, label="list-page")
             tree = parse(cleared.html)
             pick = (
-                select_variant(tree, force_build, app_slug, arch=arch, build_codes=build_codes)
+                select_variant(
+                    tree, force_build, app_slug, arch=arch, build_codes=build_codes, accepted_codes=accepted_codes
+                )
                 if tree is not None
                 else None
             )
@@ -273,6 +291,13 @@ async def download_apk(
         if not variant_url or pick is None:
             await _save_diagnostic_html(cleared.html, f"no-variant-{app_slug}")
             raise RuntimeError("No matching variant found on APKMirror")
+        if accepted_codes and pick.basis != "accepted-build":
+            dump_variant_rows_for_debug(tree)
+            await _save_diagnostic_html(cleared.html, f"no-accepted-build-{app_slug}")
+            raise RuntimeError(
+                f"None of the {pick.eligible} {arch} builds listed on APKMirror for {version} has a build "
+                f"code the patch accepts ({_describe_accepted_codes(accepted_codes)})."
+            )
         log.info(f"VARIANT: {variant_url}")
         _log_pick(pick, arch, force_build, build_codes)
         if build_codes and pick.basis == "default" and not force_build:

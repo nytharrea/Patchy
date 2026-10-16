@@ -843,3 +843,122 @@ async def test_download_apk_opens_the_variant_page_of_the_discord_bundle(monkeyp
     assert [url for label, url in requested if label == "variant-page"] == [DISCORD_VARIANT_URL]
     assert downloads == [("https://www.apkmirror.com/file", "discord.apk")]
     assert not (tmp_path / "diagnostics").exists()
+
+
+MESSENGER_ACCEPTED = frozenset({346611351, 346611369, 346611423, 346611438, 346611439, 346611440})
+
+
+def _messenger_html():
+    return f"""<html><body><div class="variants-table">
+        {_split(346611418, "arm64-v8a", "nodpi", "/unsupported", android="Android 9.0+", badge="APK")}
+        {_split(346611351, "arm64-v8a", "213-240dpi", "/dpi", android="Android 9.0+", badge="APK")}
+        {_split(346611369, "arm64-v8a", "nodpi", "/base", android="Android 9.0+", badge="APK")}
+        {_split(346611423, "armeabi-v7a", "nodpi", "/v7a", android="Android 9.0+", badge="APK")}
+    </div></body></html>"""
+
+
+def test_select_variant_takes_the_first_nodpi_apk_when_nothing_tells_which_build_the_patch_wants():
+    pick = select_variant(parse(_messenger_html()), None, "messenger")
+
+    assert pick is not None
+    assert pick.variant.href == "/unsupported"
+    assert pick.basis == "default"
+
+
+def test_select_variant_picks_a_row_with_a_build_code_the_patch_accepts():
+    pick = select_variant(parse(_messenger_html()), None, "messenger", accepted_codes=MESSENGER_ACCEPTED)
+
+    assert pick is not None
+    assert pick.variant.href == "/base"
+    assert pick.basis == "accepted-build"
+    assert pick.matched_code == 346611369
+
+
+def test_select_variant_prefers_an_accepted_code_over_the_one_the_bundle_declares():
+    pick = select_variant(
+        parse(_messenger_html()),
+        None,
+        "messenger",
+        build_codes={"ARM64_V8A": 346611418},
+        accepted_codes=MESSENGER_ACCEPTED,
+    )
+
+    assert pick is not None
+    assert pick.variant.href == "/base"
+    assert pick.basis == "accepted-build"
+
+
+def test_select_variant_never_leaves_the_target_arch_for_an_accepted_code():
+    html = f"""<html><body><div class="variants-table">
+        {_split(346611418, "arm64-v8a", "nodpi", "/unsupported", badge="APK")}
+        {_split(346611423, "armeabi-v7a", "nodpi", "/v7a", badge="APK")}
+    </div></body></html>"""
+
+    pick = select_variant(parse(html), None, "messenger", accepted_codes=MESSENGER_ACCEPTED)
+
+    assert pick is not None
+    assert pick.variant.href == "/unsupported"
+    assert pick.basis == "default"
+
+
+def test_select_variant_lets_force_build_narrow_the_rows_before_an_accepted_code_decides():
+    pick = select_variant(parse(_messenger_html()), "213-240dpi", "messenger", accepted_codes=MESSENGER_ACCEPTED)
+
+    assert pick is not None
+    assert pick.variant.href == "/dpi"
+    assert pick.basis == "accepted-build"
+    assert pick.matched_code == 346611351
+
+
+def test_select_variant_treats_empty_accepted_codes_like_none():
+    html = _messenger_html()
+
+    assert select_variant(parse(html), None, "messenger", accepted_codes=[]) == select_variant(
+        parse(html), None, "messenger"
+    )
+
+
+async def test_download_apk_opens_the_variant_page_of_a_build_the_patch_accepts(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(monkeypatch, tmp_path, accepted_codes={475417127})
+
+    assert _variant_page_fetched(fetched) == [f"https://www.apkmirror.com{_facebook_variant_href('2')}"]
+    assert warnings == []
+    assert not (tmp_path / "diagnostics").exists()
+
+
+async def test_download_apk_prefers_an_accepted_build_over_a_declared_one(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(
+        monkeypatch, tmp_path, build_codes=HUSHFACEBOOK_CODES, accepted_codes={475417127}
+    )
+
+    assert _variant_page_fetched(fetched) == [f"https://www.apkmirror.com{_facebook_variant_href('2')}"]
+    assert warnings == []
+
+
+async def test_download_apk_says_which_build_code_the_patch_accepted(monkeypatch, tmp_path):
+    lines = []
+    monkeypatch.setattr(client.log, "info", lines.append)
+
+    await _download_facebook(monkeypatch, tmp_path, accepted_codes={475417127})
+
+    assert any("build 475417127" in line and "a build code the patch accepts" in line for line in lines)
+
+
+async def test_download_apk_gives_up_when_no_listed_build_is_one_the_patch_accepts(monkeypatch, tmp_path):
+    with pytest.raises(RuntimeError, match="has a build code the patch accepts") as exc_info:
+        await _download_facebook(monkeypatch, tmp_path, accepted_codes={222222222, 111111111})
+
+    assert "111111111, 222222222" in str(exc_info.value)
+    assert not (tmp_path / "facebook.apkm").exists()
+    assert len(list((tmp_path / "diagnostics").glob("no-accepted-build-facebook-*.html"))) == 1
+
+
+async def test_download_apk_cannot_choose_another_build_of_a_single_variant_release(monkeypatch, tmp_path):
+    async def fake_resolve_list_url(site, version):
+        return FACEBOOK_LIST_URL, True
+
+    monkeypatch.setattr(client, "_resolve_list_url", fake_resolve_list_url)
+    monkeypatch.setattr(client.paths, "downloads_dir", lambda: tmp_path)
+
+    with pytest.raises(RuntimeError, match="only one build of 582.0.0.50.54"):
+        await client.download_apk("582.0.0.50.54", "facebook", FACEBOOK_SITE, accepted_codes={475417127})

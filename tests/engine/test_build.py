@@ -370,6 +370,171 @@ async def test_process_build_passes_no_build_codes_without_cli_versions(monkeypa
     assert calls == [("9.9.9", {"arch": "arm64-v8a", "build_codes": {}})]
 
 
+NO_BUILD_CODES = "Most common compatible versions:\n9.9.9 (3 patches)\n\n"
+
+
+def _rejecting_patch(monkeypatch, tmp_path, *, rejections):
+    patched = []
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        patched.append(apk)
+        if len(patched) <= rejections:
+            raise build.UnsupportedBuild("Patch failed (exit 1)", 990, frozenset({880, 881}))
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+    return patched
+
+
+def _numbered_apkmirror_downloads(monkeypatch, tmp_path):
+    downloads = []
+
+    async def fake_download(version, app_slug, source, force_build, **kwargs):
+        downloads.append({"force_build": force_build, **kwargs})
+        return str(tmp_path / f"downloaded-{len(downloads)}.apk")
+
+    monkeypatch.setattr(apkmirror, "download_apk", fake_download)
+    return downloads
+
+
+async def test_process_build_fetches_a_build_the_patch_accepts_when_it_rejects_the_first_one(
+    monkeypatch, tmp_path
+):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    downloads = _numbered_apkmirror_downloads(monkeypatch, tmp_path)
+    patched = _rejecting_patch(monkeypatch, tmp_path, rejections=1)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result is not None
+    assert downloads == [
+        {"force_build": None, "arch": "arm64-v8a", "build_codes": {}},
+        {"force_build": None, "arch": "arm64-v8a", "build_codes": {}, "accepted_codes": frozenset({880, 881})},
+    ]
+    assert patched == [str(tmp_path / "downloaded-1.apk"), str(tmp_path / "downloaded-2.apk")]
+
+
+async def test_process_build_asks_for_the_same_version_again(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_returns(monkeypatch, VERSIONS_WITH_CODES)
+    versions = []
+
+    async def fake_download(version, app_slug, source, force_build, **kwargs):
+        versions.append((version, kwargs["build_codes"]))
+        return str(tmp_path / "downloaded.apk")
+
+    monkeypatch.setattr(apkmirror, "download_apk", fake_download)
+    _rejecting_patch(monkeypatch, tmp_path, rejections=1)
+
+    await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert versions == [("9.9.9", {"ARM64_V8A": 990, "ARMEABI_V7A": 991})] * 2
+
+
+async def test_process_build_keeps_the_force_build_pin_when_it_asks_for_another_build(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    catalog.BUILDS[build_key]["force_build"] = "240-640dpi"
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    downloads = _numbered_apkmirror_downloads(monkeypatch, tmp_path)
+    _rejecting_patch(monkeypatch, tmp_path, rejections=1)
+
+    await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["force_build"] for download in downloads] == ["240-640dpi", "240-640dpi"]
+
+
+async def test_process_build_verifies_the_replacement_apk_before_patching_it(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    order = []
+
+    async def fake_download(version, app_slug, source, force_build, **kwargs):
+        order.append("download")
+        return str(tmp_path / f"downloaded-{order.count('download')}.apk")
+
+    async def fake_verify(apk_path, app_slug):
+        order.append(f"verify:{apk_path.rsplit('/', 1)[-1]}")
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        order.append(f"patch:{apk.rsplit('/', 1)[-1]}")
+        if order.count("download") == 1:
+            raise build.UnsupportedBuild("Patch failed (exit 1)", 990, frozenset({880}))
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(apkmirror, "download_apk", fake_download)
+    monkeypatch.setattr(build, "verify_apk_signature", fake_verify)
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+
+    await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert order == [
+        "download",
+        "verify:downloaded-1.apk",
+        "patch:downloaded-1.apk",
+        "download",
+        "verify:downloaded-2.apk",
+        "patch:downloaded-2.apk",
+    ]
+
+
+async def test_process_build_does_not_ask_for_a_third_build(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    downloads = _numbered_apkmirror_downloads(monkeypatch, tmp_path)
+    patched = _rejecting_patch(monkeypatch, tmp_path, rejections=2)
+
+    with pytest.raises(build.UnsupportedBuild):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert len(downloads) == 2
+    assert len(patched) == 2
+
+
+async def test_process_build_does_not_refetch_after_a_failure_that_is_not_a_rejected_build(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    downloads = _numbered_apkmirror_downloads(monkeypatch, tmp_path)
+
+    async def fake_patch(*a, **kw):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert len(downloads) == 1
+
+
+async def test_process_build_does_not_look_for_another_build_of_a_github_apk(monkeypatch, tmp_path):
+    apk_source = {"type": "github", "owner": "acme-inc", "repo": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source)
+    downloads = []
+
+    async def fake_github_download(version, app_slug, source):
+        downloads.append(version)
+        return str(tmp_path / "downloaded.apk")
+
+    async def fake_apkmirror_download(*a, **kw):
+        raise AssertionError("apkmirror.download_apk should not be called for a github source")
+
+    monkeypatch.setattr(github, "download_apk", fake_github_download)
+    monkeypatch.setattr(apkmirror, "download_apk", fake_apkmirror_download)
+    _rejecting_patch(monkeypatch, tmp_path, rejections=1)
+
+    with pytest.raises(build.UnsupportedBuild):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert downloads == ["1.2.3"]
+
+
 FOUR_SUPPORTED_VERSIONS = (
     "Most common compatible versions:\n"
     "\t9.9.9 (3 patches)\n"
@@ -711,6 +876,20 @@ async def test_process_build_still_times_a_download_that_fails(monkeypatch, tmp_
         await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
     assert timings == {"select": 1.0, "download": 1.0}
+
+
+async def test_process_build_adds_the_refetch_of_a_rejected_build_to_the_stage_times(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    monkeypatch.setattr(build.log, "time", _TickingClock())
+    _numbered_apkmirror_downloads(monkeypatch, tmp_path)
+    _rejecting_patch(monkeypatch, tmp_path, rejections=1)
+
+    with build.log.collect_timings() as timings:
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert timings == {"select": 1.0, "download": 2.0, "verify": 2.0, "patch": 2.0}
 
 
 async def test_run_builds_records_the_stage_times_and_the_total(monkeypatch, tmp_path):

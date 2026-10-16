@@ -83,6 +83,7 @@ One APKMirror release often lists many variants of the same version: several CPU
 2. On the release page it keeps the rows that fit the app's `arch` (universal rows fit any architecture) and takes the row whose build code is the one declared for that `arch`. A code the bundle declares for another architecture, found on a row that fits the `arch`, is the second choice.
 3. When the bundle declares no build code, the original rule applies: plain APKs before bundles, `nodpi` before `anydpi` before a specific density, and the first listed row wins. Instagram builds only consider bundle rows.
 4. When the bundle declares codes but no row carries one of them, the original rule applies as well and the log carries a warning that names the declared codes.
+5. Some bundles, HushMessenger for one, list a version without build codes and check the build only while patching. When the patcher stops with `version code N is not supported` and names the build codes it accepts, Patchy fetches the same version again, takes the row that carries one of those codes (the `VARIANT:` line then says `a build code the patch accepts`) and patches a second time. This happens once per build, only for APKMirror sources, and `force_build` still narrows the rows first. When APKMirror lists none of the accepted builds, the build fails with a message that names them.
 
 The `VARIANT:` line of the build log is followed by the chosen row's build code, architecture, minimum Android, density and the reason it was chosen.
 

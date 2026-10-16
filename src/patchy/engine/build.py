@@ -12,7 +12,7 @@ from ..catalog.models import ApkMirrorSource, BuildConfig
 from ..core import log, paths
 from ..fetch import apkmirror, github
 from ..fetch.bundles import Tools
-from .patcher import list_versions, patch_apk
+from .patcher import UnsupportedBuild, list_versions, patch_apk
 from .verify import UnpinnedSignature, verify_apk_signature
 from .versions import extract_cli_version_codes, extract_cli_versions, file_name_version, rank_versions
 
@@ -113,6 +113,33 @@ async def _download_from_apkmirror(
     return await download(choices[-1]), choices[-1]
 
 
+async def _refetch_accepted(
+    build: BuildConfig, source: ApkMirrorSource, selected: VersionChoice, rejected: UnsupportedBuild
+) -> str:
+    app_slug = build["app_slug"]
+    accepted = ", ".join(str(code) for code in sorted(rejected.accepted))
+    log.warn(
+        f"The patch rejected build code {rejected.rejected} and accepts {accepted}. "
+        f"Fetching one of those builds from APKMirror."
+    )
+
+    with log.timed("download"):
+        apk_path = await apkmirror.download_apk(
+            selected.version,
+            app_slug,
+            source,
+            build.get("force_build"),
+            arch=build["arch"],
+            build_codes=selected.build_codes,
+            accepted_codes=rejected.accepted,
+        )
+
+    with log.timed("verify"):
+        await verify_apk_signature(apk_path, app_slug)
+
+    return apk_path
+
+
 async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> dict | None:
     build = catalog.BUILDS[build_key]
     app_slug = build["app_slug"]
@@ -137,16 +164,26 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
     with log.timed("verify"):
         await verify_apk_signature(apk_path, app_slug)
 
-    with log.timed("patch"):
-        patched_apk = await patch_apk(
+    async def patch(path: str) -> str:
+        return await patch_apk(
             cli_jar,
             bundle_paths,
-            apk_path,
+            path,
             exclude=build.get("exclude"),
             enable=build.get("enable"),
             options=build.get("options"),
             arch=build["arch"],
         )
+
+    try:
+        with log.timed("patch"):
+            patched_apk = await patch(apk_path)
+    except UnsupportedBuild as err:
+        if source["type"] != "apkmirror":
+            raise
+        apk_path = await _refetch_accepted(build, source, selected, err)
+        with log.timed("patch"):
+            patched_apk = await patch(apk_path)
 
     if not Path(patched_apk).exists():
         return None

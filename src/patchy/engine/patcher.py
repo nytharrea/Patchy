@@ -9,10 +9,34 @@ from ..core.settings import settings
 
 STREAM_LIMIT = 1024 * 1024
 SAVED_PATTERN = re.compile(r"INFO:\s+Saved to\s+([^\r\n]+\.apk)", re.IGNORECASE)
+REJECTED_BUILD_PATTERN = re.compile(r"version code (\d+) is not supported", re.IGNORECASE)
+ACCEPTED_BUILDS_PATTERN = re.compile(r"\(version codes?\s+([^)]*)\)", re.IGNORECASE)
+DIGITS_PATTERN = re.compile(r"\d+")
 
 
 class PatchTimeout(RuntimeError):
     pass
+
+
+class UnsupportedBuild(RuntimeError):
+    def __init__(self, message: str, rejected: int, accepted: frozenset[int]) -> None:
+        super().__init__(message)
+        self.rejected = rejected
+        self.accepted = accepted
+
+
+def unsupported_build(output: str) -> tuple[int, frozenset[int]] | None:
+    rejected = REJECTED_BUILD_PATTERN.search(output)
+    if rejected is None:
+        return None
+    code = int(rejected.group(1))
+    accepted = {
+        int(digits)
+        for group in ACCEPTED_BUILDS_PATTERN.findall(output)
+        for digits in DIGITS_PATTERN.findall(group)
+    }
+    accepted.discard(code)
+    return (code, frozenset(accepted)) if accepted else None
 
 
 def build_patch_command(
@@ -105,7 +129,11 @@ async def patch_apk(
         raise RuntimeError("Applying 0 patches. No compatible patch found or version not supported.")
 
     if process.returncode != 0:
-        raise RuntimeError(f"Patch failed (exit {process.returncode}):\n{output}")
+        message = f"Patch failed (exit {process.returncode}):\n{output}"
+        unsupported = unsupported_build(output)
+        if unsupported is not None:
+            raise UnsupportedBuild(message, *unsupported)
+        raise RuntimeError(message)
 
     match = SAVED_PATTERN.search(output)
     if not match:

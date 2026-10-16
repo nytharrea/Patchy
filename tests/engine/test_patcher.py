@@ -234,6 +234,69 @@ async def test_raises_on_nonzero_exit_code(monkeypatch, tmp_path):
         await patcher.patch_apk("desktop.jar", ["p"], "input.apk")
 
 
+HUSH_REJECTION = [
+    'ERROR: Patching aborted: Patching failed: Patch "Allow chat bubbles" failed: The patch "Allow chat bubbles" '
+    'depends on "BytecodePatch@556906020", which raised an exception:',
+    "app.morphe.patcher.patch.PatchException: Install beside Meta apps: version code 346611418 is not supported. "
+    "Use an unmodified arm64 Messenger 583.0.0.29.95 APK (version code 346611351 or 346611369 or 346611423 "
+    "or 346611438 or 346611439 or 346611440).",
+]
+HUSH_ACCEPTED = frozenset({346611351, 346611369, 346611423, 346611438, 346611439, 346611440})
+
+
+def test_unsupported_build_reads_the_rejected_and_the_accepted_codes_from_the_patch_message():
+    assert patcher.unsupported_build("\n".join(HUSH_REJECTION)) == (346611418, HUSH_ACCEPTED)
+
+
+def test_unsupported_build_collects_the_codes_of_every_version_name():
+    output = (
+        "Install beside Meta apps: version code 1 is not supported. Use an unmodified arm64 Messenger "
+        "583.0.0.29.95 APK (version code 346611351 or 346611369) or 584.0.0.1.91 APK (version code 347000001)."
+    )
+
+    assert patcher.unsupported_build(output) == (1, frozenset({346611351, 346611369, 347000001}))
+
+
+def test_unsupported_build_never_offers_the_rejected_code_back():
+    output = "version code 5 is not supported. Use a build (version code 5 or 6)."
+
+    assert patcher.unsupported_build(output) == (5, frozenset({6}))
+
+
+def test_unsupported_build_is_none_when_the_patch_names_no_other_code():
+    assert patcher.unsupported_build("version code 5 is not supported.") is None
+    assert patcher.unsupported_build("version code 5 is not supported (version code 5).") is None
+
+
+def test_unsupported_build_is_none_for_other_failures():
+    assert patcher.unsupported_build("ERROR: FAILED: Some patch (version code 6 or 7)") is None
+    assert patcher.unsupported_build("") is None
+
+
+async def test_a_rejected_build_raises_unsupported_build_with_the_accepted_codes(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path, HUSH_REJECTION, returncode=1)
+
+    with pytest.raises(patcher.UnsupportedBuild, match="exit 1") as exc_info:
+        await patcher.patch_apk("desktop.jar", ["p"], "input.apk")
+
+    assert exc_info.value.rejected == 346611418
+    assert exc_info.value.accepted == HUSH_ACCEPTED
+    assert "version code 346611418 is not supported" in str(exc_info.value)
+
+
+def test_unsupported_build_is_a_runtime_error_so_callers_report_it_like_any_failure():
+    assert issubclass(patcher.UnsupportedBuild, RuntimeError)
+
+
+async def test_a_plain_failure_is_not_reported_as_an_unsupported_build(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path, ["some error output"], returncode=1)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await patcher.patch_apk("desktop.jar", ["p"], "input.apk")
+
+    assert not isinstance(exc_info.value, patcher.UnsupportedBuild)
+
+
 async def test_raises_when_saved_path_not_found_in_output(monkeypatch, tmp_path):
     _patch_common(monkeypatch, tmp_path, ["patching finished, no path line here"])
 

@@ -1,5 +1,5 @@
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urljoin
@@ -14,13 +14,15 @@ _UNIVERSAL_ARCHS = ("universal", "evrensel", "noarch")
 _ARCH_TOKEN = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*")
 _BUILD_CODE_TOKEN = re.compile(r"(?<!\w)(?<!\d\.)(?<!\d,)(\d{3,})(?!\w)(?!\.\d)(?!,\d)")
 
-PickBasis = Literal["target-build", "declared-build", "default"]
+PickBasis = Literal["accepted-build", "target-build", "declared-build", "default"]
 
-_TARGET_BUILD = 0
-_DECLARED_BUILD = 1
-_NO_BUILD_MATCH = 2
+_ACCEPTED_BUILD = 0
+_TARGET_BUILD = 1
+_DECLARED_BUILD = 2
+_NO_BUILD_MATCH = 3
 
 _BASIS_BY_TIER: dict[int, PickBasis] = {
+    _ACCEPTED_BUILD: "accepted-build",
     _TARGET_BUILD: "target-build",
     _DECLARED_BUILD: "declared-build",
     _NO_BUILD_MATCH: "default",
@@ -202,8 +204,14 @@ def _default_slot(variant: Variant) -> int:
 
 
 def _match_declared_build(
-    variant: Variant, target_code: int | None, declared_codes: frozenset[int]
+    variant: Variant,
+    target_code: int | None,
+    declared_codes: frozenset[int],
+    accepted_codes: frozenset[int] = frozenset(),
 ) -> tuple[int, int | None]:
+    accepted = variant.build_codes & accepted_codes
+    if accepted:
+        return _ACCEPTED_BUILD, min(accepted)
     if target_code is not None and target_code in variant.build_codes:
         return _TARGET_BUILD, target_code
     shared = variant.build_codes & declared_codes
@@ -219,12 +227,14 @@ def select_variant(
     *,
     arch: str = DEFAULT_ARCH,
     build_codes: Mapping[str, int] | None = None,
+    accepted_codes: Collection[int] | None = None,
 ) -> Pick | None:
     variants = parse_variants(tree)
     target_key = arch_key(arch)
     declared = {arch_key(name): code for name, code in (build_codes or {}).items()}
     target_code = declared.get(target_key)
     declared_codes = frozenset(declared.values())
+    accepted = frozenset(accepted_codes or ())
     pin = str(force_build) if force_build else ""
 
     best: tuple[tuple[int, int, int], Variant, int | None] | None = None
@@ -239,7 +249,7 @@ def select_variant(
             continue
 
         eligible += 1
-        tier, matched = _match_declared_build(variant, target_code, declared_codes)
+        tier, matched = _match_declared_build(variant, target_code, declared_codes, accepted)
         rank = (tier, _default_slot(variant), index)
         if best is None or rank < best[0]:
             best = (rank, variant, matched)
