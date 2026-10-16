@@ -36,7 +36,7 @@ src/patchy/
 │  ├─ github.py        GitHub release downloads and GitHub-hosted apps
 │  └─ bundles.py       patcher CLI, patch bundles, companions, bundles.json manifest
 ├─ engine/
-│  ├─ build.py         one build: version, download, verify, patch, status file
+│  ├─ build.py         one build: version, download, verify, patch, status file with stage timings
 │  ├─ patcher.py       async patcher CLI wrapper with a per-line watchdog
 │  ├─ verify.py        apksigner-based certificate check against the pins
 │  ├─ pins.py          reading, promoting and committing pins
@@ -46,8 +46,9 @@ src/patchy/
 │  ├─ pipeline.py      `sign` and `publish` orchestration
 │  ├─ release.py       GitHub Releases REST wrapper
 │  ├─ assets.py        file name matching, status files, release body
+│  ├─ telemetry.py     per-build time table for the job summary
 │  └─ notify.py        Discord, Telegram and Apprise notifications
-└─ core/               settings, paths, log, retry, http, process, toolchain, flaresolverr
+└─ core/               settings, paths, log (including stage timers and the job summary writer), retry, http, process, toolchain, flaresolverr
 ```
 
 `tests/` mirrors this tree. All generated files (downloads, patched and signed APKs, manifests, diagnostics) live under `build/`, which `PATCHY_BUILD_DIR` can relocate.
@@ -62,6 +63,7 @@ src/patchy/
 | `patchy build [--app KEY]` | Download, verify and patch one build (`all` runs every build); writes `build/out/` |
 | `patchy sign` | Zipalign and sign everything in `build/artifacts/` into `build/signed/` |
 | `patchy publish` | Create the release from `build/signed/`, upload, clean up, notify |
+| `patchy summary` | Write the per-build download, patch and total times (and failures) as a table to `$GITHUB_STEP_SUMMARY`, or print it when that variable is not set |
 | `patchy pin APP [--sha256 HEX]` | Promote a pending fingerprint to `pins/known.json` and commit |
 | `patchy pin --collect DIR` | Record fingerprints reported by build status files into `pins/pending.json` |
 | `patchy toolchain [--no-install]` | Find (and install the newest) Android build-tools; exports `APKSIGNER` and `ZIPALIGN` to `$GITHUB_ENV` |
@@ -90,6 +92,7 @@ Matched case-insensitively by `core/settings.py`.
 | `UPLOAD_CONCURRENCY` | Release assets uploaded at once by `patchy publish`, companions included (default 10) |
 | `PATCHY_BUILD_DIR` | Relocate `build/` |
 | `NO_COLOR`, `GITHUB_ACTIONS` | Console colors and GitHub annotation output |
+| `GITHUB_STEP_SUMMARY` | Set by GitHub Actions for every step; `patchy summary` appends the telemetry table to this file |
 
 ## Tests and style
 

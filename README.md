@@ -10,7 +10,7 @@ Patchy is an independent project. It is not affiliated with the Morphe or ReVanc
 
 1. **plan** validates `config/`, computes the release tag, name and build matrix, and downloads the patcher CLI plus every patch bundle once for the whole run.
 2. **build** runs one runner per build, in parallel. Each runner downloads the original APK (APKMirror through a FlareSolverr sidecar, or a GitHub release), checks its signing certificate against `pins/known.json`, and patches it. This job runs third-party patch code, so it holds no signing key and only a read-only token.
-3. **release** downloads every built APK, zipaligns and signs it with the newest `apksigner`, verifies the result, attests build provenance, creates one GitHub Release with release notes, uploads the APKs (plus MicroG and PotHelper when YouTube or YT Music was built), removes older Patchy releases, and sends a notification.
+3. **release** downloads every built APK, zipaligns and signs it with the newest `apksigner`, verifies the result, attests build provenance, creates one GitHub Release with release notes, uploads the APKs (plus MicroG and PotHelper when YouTube or YT Music was built), removes older Patchy releases, sends a notification, and writes a table with the download, patch and total time of every build to the run's job summary.
 4. **cleanup** deletes old workflow runs.
 
 A separate `ci.yml` runs `ruff`, `mypy` and `pytest` on every push and pull request, and also hosts two maintenance jobs you can start by hand: one that regenerates `uv.lock`, and one that fixes lint and formatting.
@@ -29,7 +29,7 @@ A separate `ci.yml` runs `ruff`, `mypy` and `pytest` on every push and pull requ
 | [Configuration](docs/configuration.md) | `config/apps/*.yaml`, `config/bundles.yaml`, `config/companions.yaml` |
 | [Apps](docs/apps.md) | Every build that ships today and how to add a new app |
 | [Signing](docs/signing.md) | Key isolation, `apksigner`, certificate pins, verifying a downloaded APK |
-| [Workflows](docs/workflows.md) | Jobs, inputs and artifacts of `release.yml` and `ci.yml` |
+| [Workflows](docs/workflows.md) | Jobs, inputs, artifacts and build telemetry of `release.yml` and `ci.yml` |
 | [Development](docs/development.md) | Project layout, `uv`, tests, CLI and environment reference |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures and what to do about them |
 

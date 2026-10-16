@@ -91,6 +91,15 @@ def _read_statuses(*directories: Path) -> list[dict]:
     return statuses
 
 
+def find_build_statuses(*directories: Path) -> dict[str, dict]:
+    statuses: dict[str, dict] = {}
+    for data in _read_statuses(*directories):
+        build_key = data.get("build_key")
+        if isinstance(build_key, str) and build_key in catalog.BUILDS:
+            statuses.setdefault(build_key, {}).update(data)
+    return statuses
+
+
 def find_failure_reasons(*directories: Path) -> dict[str, str]:
     reasons: dict[str, str] = {}
     for data in _read_statuses(*directories):

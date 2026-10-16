@@ -13,7 +13,17 @@ A = "a" * 64
 
 def test_every_subcommand_is_registered():
     parser = cli.build_parser()
-    for command in ("validate", "plan", "fetch", "build", "sign", "publish", "pin", "toolchain"):
+    for command in (
+        "validate",
+        "plan",
+        "fetch",
+        "build",
+        "sign",
+        "publish",
+        "summary",
+        "pin",
+        "toolchain",
+    ):
         args = parser.parse_args([command]) if command != "pin" else parser.parse_args([command, "youtube"])
         assert args.command == command
         assert callable(args.func)
@@ -260,3 +270,35 @@ def test_sign_and_publish_delegate_to_the_pipeline(monkeypatch):
     assert cli.main(["sign"]) == 0
     assert cli.main(["publish"]) == 0
     assert calls == ["sign", "publish"]
+
+
+def test_summary_writes_the_table_to_the_github_job_summary(monkeypatch, tmp_path):
+    from patchy.publish import telemetry
+
+    target = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(target))
+    monkeypatch.setattr(telemetry, "render_summary", lambda: "## table")
+
+    assert cli.main(["summary"]) == 0
+    assert target.read_text(encoding="utf-8") == "## table\n"
+
+
+def test_summary_prints_the_table_when_there_is_no_job_summary_file(monkeypatch, capsys):
+    from patchy.publish import telemetry
+
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(telemetry, "render_summary", lambda: "## table")
+
+    assert cli.main(["summary"]) == 0
+    assert "## table" in capsys.readouterr().out
+
+
+def test_summary_with_nothing_to_report_still_succeeds(monkeypatch, tmp_path):
+    from patchy.publish import telemetry
+
+    target = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(target))
+    monkeypatch.setattr(telemetry, "render_summary", lambda: "")
+
+    assert cli.main(["summary"]) == 0
+    assert not target.exists()

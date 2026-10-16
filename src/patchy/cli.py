@@ -103,6 +103,18 @@ def cmd_publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_summary(args: argparse.Namespace) -> int:
+    from .publish.telemetry import render_summary
+
+    markdown = render_summary()
+    if not markdown:
+        log.warn("No build statuses were found, so there is nothing to summarize.")
+        return 0
+    if not log.step_summary(markdown):
+        print(markdown)
+    return 0
+
+
 def cmd_pin(args: argparse.Namespace) -> int:
     from .engine import pins
     from .publish.assets import find_pending_pins
@@ -173,6 +185,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     publish = commands.add_parser("publish", help="create the GitHub release, upload APKs and notify")
     publish.set_defaults(func=cmd_publish)
+
+    summary = commands.add_parser("summary", help="write per-build download and patch times to the job summary")
+    summary.set_defaults(func=cmd_summary)
 
     pin = commands.add_parser("pin", help="trust a pending certificate fingerprint, or record pending ones")
     pin.add_argument("app", nargs="?", help="app slug whose pending fingerprint should become trusted")

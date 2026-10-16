@@ -288,6 +288,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           APPRISE_URLS: ${{ secrets.APPRISE_URLS }}
 
+      - name: Write the build telemetry summary
+        if: always()
+        continue-on-error: true
+        run: uv run --no-sync patchy summary
+
       - name: Keep the signed APKs when publishing fails
         if: failure()
         continue-on-error: true

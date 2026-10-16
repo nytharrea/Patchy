@@ -17,8 +17,8 @@ Only one run is active at a time (`concurrency: patchy-release`), because the re
 | Job | Permissions | What it does |
 |---|---|---|
 | `plan` | `contents: read` | Installs dependencies from `uv.lock`, runs `patchy plan` (validates config, writes `tag`, `name`, `matrix`) and `patchy fetch` (downloads the CLI and the bundles the selected builds need, writes `bundles.json`). Uploads `patchy-tools` and `patchy-manifest` |
-| `build` | `contents: read` | One runner per build, with a FlareSolverr service container. Runs `patchy build --app <key>` and uploads `apk-<key>` (unsigned APK and `status-<key>.json`) and diagnostics |
-| `release` | `contents: write`, `id-token`, `attestations`, `artifact-metadata` | Downloads every `apk-*` artifact, runs `patchy sign`, attests the signed APKs, runs `patchy publish`, keeps the signed APKs as `signed-apks` if a step failed, then runs `patchy pin --collect` to record fingerprints that builds reported |
+| `build` | `contents: read` | One runner per build, with a FlareSolverr service container. Runs `patchy build --app <key>` and uploads `apk-<key>` (unsigned APK and `status-<key>.json`, which carries the stage timings) and diagnostics |
+| `release` | `contents: write`, `id-token`, `attestations`, `artifact-metadata` | Downloads every `apk-*` artifact, runs `patchy sign`, attests the signed APKs, runs `patchy publish`, writes the build telemetry table to the job summary (`patchy summary`), keeps the signed APKs as `signed-apks` if a step failed, then runs `patchy pin --collect` to record fingerprints that builds reported |
 | `pin` | `contents: write` | Runs `patchy pin <app>` when the `pin` input is set |
 | `cleanup` | `actions: write` | Deletes workflow runs older than 30 days, keeping at least five |
 
@@ -32,6 +32,31 @@ The release job is bounded by hashing and copying a few gigabytes and by upload 
 - MicroG and PotHelper are fetched and uploaded in the same pool as the APKs, ahead of them, instead of after the last APK.
 - `apk-<key>` and `patchy-tools` are uploaded with `compression-level: 0`. APKs, jars and `.mpp` files are already compressed, so zipping them again only costs CPU time on both ends.
 - Every `Signed and verified` line shows the size, the total time and the time of the `align`, `sign` and `verify` stages, every `Uploaded` line shows its duration and MB/s, and each stage ends with a summary line. Compare those numbers between runs before changing the settings.
+
+### Build telemetry
+
+Every build job times its stages with `log.timed` (`core/log.py`) and stores the seconds in its `status-<key>.json` under `timings`:
+
+| Stage | What it covers |
+|---|---|
+| `select` | Asking the patch bundles which app versions they support |
+| `download` | Finding and downloading the original APK (APKMirror or GitHub), including retries and Cloudflare handling |
+| `verify` | Checking the original certificate against `pins/known.json` |
+| `patch` | Running the patcher |
+| `total` | The whole build, from the first stage to the status file |
+
+A build that fails reports the stages it reached. The same measurements appear in the build log as `⏱️ download took 41.3 s`.
+
+At the end of the `release` job, `patchy summary` merges the status files of all builds with the list of planned builds and appends one table to the job summary (`$GITHUB_STEP_SUMMARY`), so the run's page shows it without opening a log:
+
+| App | Version | Status | Download | Patch | Total |
+|---|---|---|--:|--:|--:|
+| `youtube` | 20.1.2 | ✅ ok | 1m 12s | 48.3 s | 2m 09s |
+| `gboard` | – | ❌ failed | 3.0 s | – | 3.5 s |
+
+Under the table the summary names the slowest download and the slowest patch, and lists every failure with the first line of its reason. A build that uploaded no status file at all (cancelled or crashed job) is listed as `no status`. The step runs even when an earlier step failed and never fails the run itself. Outside GitHub Actions, where `GITHUB_STEP_SUMMARY` is not set, `patchy summary` prints the table to the console.
+
+Times are measured inside each build job, so they leave out runner setup, the FlareSolverr start and the wait for a free runner.
 
 ### Artifacts
 

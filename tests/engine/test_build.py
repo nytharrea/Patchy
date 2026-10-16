@@ -670,3 +670,128 @@ async def test_run_builds_pauses_between_apkmirror_builds_but_not_after_the_last
 
     assert len(sleeps) == 1
     assert 6.0 <= sleeps[0] <= 14.0
+
+
+class _TickingClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        self.now += 1.0
+        return self.now
+
+
+async def test_process_build_times_every_stage(monkeypatch, tmp_path):
+    apk_source = {"type": "github", "owner": "acme-inc", "repo": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source)
+    monkeypatch.setattr(build.log, "time", _TickingClock())
+
+    async def fake_download(version, app_slug, source):
+        return str(tmp_path / "downloaded.apk")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+
+    with build.log.collect_timings() as timings:
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert timings == {"select": 1.0, "download": 1.0, "verify": 1.0, "patch": 1.0}
+
+
+async def test_process_build_still_times_a_download_that_fails(monkeypatch, tmp_path):
+    apk_source = {"type": "github", "owner": "acme-inc", "repo": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source)
+    monkeypatch.setattr(build.log, "time", _TickingClock())
+
+    async def failing_download(version, app_slug, source):
+        raise RuntimeError("HTTP 403")
+
+    monkeypatch.setattr(github, "download_apk", failing_download)
+
+    with build.log.collect_timings() as timings, pytest.raises(RuntimeError, match="HTTP 403"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert timings == {"select": 1.0, "download": 1.0}
+
+
+async def test_run_builds_records_the_stage_times_and_the_total(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, {"type": "github", "owner": "a", "repo": "b"})
+    clock = _TickingClock()
+    monkeypatch.setattr(build, "time", clock)
+    monkeypatch.setattr(build.log, "time", clock)
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        with build.log.timed("download"):
+            pass
+        with build.log.timed("patch"):
+            pass
+        return {"name": "The App-1.2.3.apk", "version": "1.2.3"}
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+
+    assert await build.run_builds([build_key], _tools(tmp_path)) == []
+
+    assert _status(tmp_path, build_key)["timings"] == {"download": 1.0, "patch": 1.0, "total": 5.0}
+
+
+async def test_run_builds_keeps_the_times_of_a_build_that_failed_midway(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, {"type": "github", "owner": "a", "repo": "b"})
+    clock = _TickingClock()
+    monkeypatch.setattr(build, "time", clock)
+    monkeypatch.setattr(build.log, "time", clock)
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        with build.log.timed("download"):
+            raise RuntimeError("HTTP 503")
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+
+    assert await build.run_builds([build_key], _tools(tmp_path)) == [build_key]
+
+    status = _status(tmp_path, build_key)
+    assert status["ok"] is False
+    assert status["timings"] == {"download": 1.0, "total": 3.0}
+
+
+async def test_run_builds_gives_every_build_its_own_timings(monkeypatch, tmp_path):
+    _common_mocks(monkeypatch, tmp_path, {"type": "github", "owner": "a", "repo": "b"})
+    monkeypatch.setattr(
+        catalog,
+        "BUILDS",
+        {
+            "one": _fake_build("one", {"type": "github", "owner": "a", "repo": "b"}),
+            "two": _fake_build("two", {"type": "github", "owner": "a", "repo": "b"}),
+        },
+    )
+    clock = _TickingClock()
+    monkeypatch.setattr(build, "time", clock)
+    monkeypatch.setattr(build.log, "time", clock)
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        with build.log.timed("download" if key == "one" else "patch"):
+            pass
+        return {"name": f"{key}.apk", "version": "1"}
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+
+    await build.run_builds(["one", "two"], _tools(tmp_path))
+
+    assert list(_status(tmp_path, "one")["timings"]) == ["download", "total"]
+    assert list(_status(tmp_path, "two")["timings"]) == ["patch", "total"]
+
+
+def test_write_status_rounds_timings_to_a_tenth_of_a_second(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATCHY_BUILD_DIR", str(tmp_path / "build"))
+
+    build.write_status("the-app", version="1", timings={"download": 12.3456, "patch": 0.04})
+
+    assert _status(tmp_path, "the-app")["timings"] == {"download": 12.3, "patch": 0.0}
+
+
+def test_write_status_leaves_timings_out_when_none_were_measured(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATCHY_BUILD_DIR", str(tmp_path / "build"))
+
+    build.write_status("the-app", version="1")
+    build.write_status("other-app", version="1", timings={})
+
+    assert "timings" not in _status(tmp_path, "the-app")
+    assert "timings" not in _status(tmp_path, "other-app")

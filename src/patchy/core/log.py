@@ -1,11 +1,18 @@
+import os
 import re
 import sys
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from loguru import logger
 
 from .settings import settings
 
 _COLOR_ENABLED = settings.no_color is None
+
+STEP_SUMMARY_ENV = "GITHUB_STEP_SUMMARY"
 
 for _name, _color, _icon in [
     ("HEADER", "<bold><cyan>", "▶"),
@@ -19,6 +26,7 @@ for _name, _color, _icon in [
     ("WAIT", "<yellow>", "⏳"),
     ("APPLIED", "<cyan>", "✅"),
     ("SKIPPED", "<red>", "⏭️"),
+    ("TIMING", "<cyan>", "⏱️"),
 ]:
     logger.level(_name, no=21, color=_color, icon=_icon)
 
@@ -113,6 +121,45 @@ def wait(msg: str) -> None:
 
 def error(msg: str) -> None:
     logger.error(msg)
+
+
+_timings: ContextVar[dict[str, float] | None] = ContextVar("patchy_timings", default=None)
+
+
+@contextmanager
+def collect_timings() -> Iterator[dict[str, float]]:
+    sink: dict[str, float] = {}
+    token = _timings.set(sink)
+    try:
+        yield sink
+    finally:
+        _timings.reset(token)
+
+
+@contextmanager
+def timed(stage: str) -> Iterator[None]:
+    began = time.monotonic()
+    try:
+        yield
+    finally:
+        seconds = time.monotonic() - began
+        sink = _timings.get()
+        if sink is not None:
+            sink[stage] = sink.get(stage, 0.0) + seconds
+        logger.log("TIMING", f"{stage} took {seconds:.1f} s")
+
+
+def step_summary(markdown: str) -> bool:
+    target = os.environ.get(STEP_SUMMARY_ENV)
+    if not target:
+        return False
+    try:
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(markdown.rstrip("\n") + "\n")
+    except OSError as e:
+        warn(f"Could not write the job summary: {e}")
+        return False
+    return True
 
 
 _LEADING_ICON_RE = re.compile(r"^[^A-Za-z]+")

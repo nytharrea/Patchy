@@ -2,6 +2,7 @@ import asyncio
 import json
 import random
 import shutil
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
@@ -30,11 +31,12 @@ def write_status(
     version: str | None = None,
     file: str | None = None,
     pending_pin: dict[str, str] | None = None,
+    timings: dict[str, float] | None = None,
 ) -> None:
     try:
         directory = paths.out_dir()
         directory.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: dict[str, object] = {
             "build_key": build_key,
             "ok": error is None,
             "error": error,
@@ -42,6 +44,8 @@ def write_status(
             "file": file,
             "pending_pin": pending_pin,
         }
+        if timings:
+            payload["timings"] = {stage: round(seconds, 1) for stage, seconds in timings.items()}
         (directory / f"status-{build_key}.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     except OSError as e:
         log.warn(f"Could not write status for {build_key}: {e}")
@@ -116,29 +120,33 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
 
     log.header(f"PROCESSING: {app_slug.upper()}")
 
-    choices = await _select_versions(build_key, cli_jar, bundle_paths)
+    with log.timed("select"):
+        choices = await _select_versions(build_key, cli_jar, bundle_paths)
 
-    if source["type"] == "apkmirror":
-        apk_path, selected = await _download_from_apkmirror(build, source, choices)
-    elif source["type"] == "github":
-        selected = choices[0]
-        apk_path = await github.download_apk(selected.version, app_slug, source)
-    else:
-        raise RuntimeError(f"Unknown apk_source.type {source['type']!r} for build {build_key!r}")
+    with log.timed("download"):
+        if source["type"] == "apkmirror":
+            apk_path, selected = await _download_from_apkmirror(build, source, choices)
+        elif source["type"] == "github":
+            selected = choices[0]
+            apk_path = await github.download_apk(selected.version, app_slug, source)
+        else:
+            raise RuntimeError(f"Unknown apk_source.type {source['type']!r} for build {build_key!r}")
 
     selected_version = selected.version
 
-    await verify_apk_signature(apk_path, app_slug)
+    with log.timed("verify"):
+        await verify_apk_signature(apk_path, app_slug)
 
-    patched_apk = await patch_apk(
-        cli_jar,
-        bundle_paths,
-        apk_path,
-        exclude=build.get("exclude"),
-        enable=build.get("enable"),
-        options=build.get("options"),
-        arch=build["arch"],
-    )
+    with log.timed("patch"):
+        patched_apk = await patch_apk(
+            cli_jar,
+            bundle_paths,
+            apk_path,
+            exclude=build.get("exclude"),
+            enable=build.get("enable"),
+            options=build.get("options"),
+            arch=build["arch"],
+        )
 
     if not Path(patched_apk).exists():
         return None
@@ -174,26 +182,44 @@ def _bundle_paths(build_key: str, tools: Tools) -> list[Path]:
     return resolved
 
 
+def _with_total(timings: dict[str, float], began: float) -> dict[str, float]:
+    return {**timings, "total": time.monotonic() - began}
+
+
 async def run_builds(build_keys: list[str], tools: Tools) -> list[str]:
     failed: list[str] = []
 
     for index, build_key in enumerate(build_keys):
-        try:
-            result = await process_build(build_key, tools.cli, _bundle_paths(build_key, tools))
-            if result:
-                log.success(f"{build_key.upper()} done: {result['name']}")
-                write_status(build_key, version=result["version"], file=result["name"])
-            else:
+        began = time.monotonic()
+        with log.collect_timings() as timings:
+            try:
+                result = await process_build(build_key, tools.cli, _bundle_paths(build_key, tools))
+                if result:
+                    log.success(f"{build_key.upper()} done: {result['name']}")
+                    write_status(
+                        build_key,
+                        version=result["version"],
+                        file=result["name"],
+                        timings=_with_total(timings, began),
+                    )
+                else:
+                    failed.append(build_key)
+                    write_status(
+                        build_key, error="patch_apk produced no output file", timings=_with_total(timings, began)
+                    )
+            except UnpinnedSignature as err:
+                log.error(f"{build_key.upper()} failed, skipping: {err}")
                 failed.append(build_key)
-                write_status(build_key, error="patch_apk produced no output file")
-        except UnpinnedSignature as err:
-            log.error(f"{build_key.upper()} failed, skipping: {err}")
-            failed.append(build_key)
-            write_status(build_key, error=str(err), pending_pin={"app": err.app_name, "sha256": err.fingerprint})
-        except Exception as err:
-            log.error(f"{build_key.upper()} failed, skipping: {err}")
-            failed.append(build_key)
-            write_status(build_key, error=str(err))
+                write_status(
+                    build_key,
+                    error=str(err),
+                    pending_pin={"app": err.app_name, "sha256": err.fingerprint},
+                    timings=_with_total(timings, began),
+                )
+            except Exception as err:
+                log.error(f"{build_key.upper()} failed, skipping: {err}")
+                failed.append(build_key)
+                write_status(build_key, error=str(err), timings=_with_total(timings, began))
 
         is_last = index == len(build_keys) - 1
         if catalog.BUILDS[build_key]["apk_source"]["type"] == "apkmirror" and not is_last:
