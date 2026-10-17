@@ -87,6 +87,28 @@ def test_discord_is_built_from_the_venus_bundle_through_apkmirror():
     assert catalog.get_release_naming("discord") == ("Discord", None)
 
 
+def test_capcut_follows_the_kveld_extra_bundle_version_through_apkmirror():
+    capcut = catalog.BUILDS["capcut"]
+
+    assert capcut["app_slug"] == "capcut"
+    assert capcut["pkg"] == "com.lemon.lvoverseas"
+    assert capcut["bundles"] == ["kveld-extra"]
+    assert capcut["force_version"] is None
+    assert capcut["force_build"] is None
+    assert capcut["apk_source"] == {
+        "type": "apkmirror",
+        "org": "bytedance-pte-ltd",
+        "slug": "capcut",
+        "release_slug": "capcut-video-editor",
+    }
+    assert catalog.BUNDLES["kveld-extra"] == {
+        "owner": "kveld9",
+        "repo": "kveld-extra-morphe-patches",
+        "label": "🌌 Kveld Extra",
+    }
+    assert catalog.get_release_naming("capcut") == ("CapCut", None)
+
+
 def test_speedtest_build_combines_multiple_bundles_into_one_build():
     assert catalog.BUILDS["speedtest"]["bundles"] == ["rushi", "morphe"]
 

@@ -7,6 +7,7 @@ Several rows patch the same app from a different bundle (for example `tiktok` an
 | Build key | App slug | Package | Source | Bundle(s) |
 |---|---|---|---|---|
 | `brave` | `brave` | `com.brave.browser` | GitHub | 🌙 Kveld |
+| `capcut` | `capcut` | `com.lemon.lvoverseas` | APKMirror | 🌌 Kveld Extra |
 | `discord` | `discord` | `com.discord` | APKMirror | 🪐 Venus |
 | `facebook` | `facebook` | `com.facebook.katana` | APKMirror | 📘 Hushfacebook |
 | `fairemail` | `fairemail` | `eu.faircode.email` | APKMirror | 💎 Heval |
@@ -46,6 +47,7 @@ Several rows patch the same app from a different bundle (for example `tiktok` an
 - `discord` is patched with the Venus bundle, which targets exactly one release written as `348.10 - Stable`. APKMirror lists it as a single universal APK Bundle (`.apkm`), and Patchy follows the bundle's version, so a newer Venus release moves the build on by itself. Its release address uses the channel (`discord-talk-play-hang-out-348-10-stable-release`) and the file is named `Discord-348.10-Stable.apk`. The first run stops at the certificate pin, as for every new app.
 - `brave` and `tiktok-kveld` use the same `kveld` bundle (`kveld9/kveld-morphe-patches`), which is downloaded once per run. The `dh6k` bundle stays in `config/bundles.yaml` unused.
 - `brave` downloads Brave's own single-file build, `BraveMonoarm64.apk` from the `v<version>` release of `brave/brave-browser`, instead of APKMirror. The kveld patches are written for that file. APKMirror serves the Google Play split bundle, a different compilation of the same release, and its first patch (`Better Tab Closing`) stops with `Failed to match the fingerprint`. Both builds carry the same signing certificate, so the `brave` pin is the same for either source.
+- `capcut` is patched with the Kveld Extra bundle (`kveld9/kveld-extra-morphe-patches`), which targets one CapCut release at a time. No version is pinned, so Patchy follows the bundle and a newer bundle release moves the build on by itself. APKMirror lists CapCut 19.8.0 twice with the same build code, as a 120-640dpi bundle and as a `nodpi` APK. The bundle declares no build codes, so the default rule takes the plain `nodpi` APK, which is the file the patches are written for. APKMirror's release address says `capcut-video-editor` instead of the folder name `capcut`, which is what `release_slug` is for. The original certificate is already in `pins/known.json` (the value APKMirror lists for the APK, which is also the one the patches' signature bypass expects), so the first run does not stop at the pin.
 
 ## Adding a new app
 

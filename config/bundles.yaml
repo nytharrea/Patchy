@@ -112,3 +112,8 @@ bundles:
     owner: Akash-Sriram
     repo: morphe-google-photos
     label: "📷 Akash-Sriram"
+
+  kveld-extra:
+    owner: kveld9
+    repo: kveld-extra-morphe-patches
+    label: "🌌 Kveld Extra"
