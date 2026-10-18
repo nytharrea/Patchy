@@ -44,6 +44,10 @@ The row selected by `force_build` has a build code the bundle does not declare f
 
 The bundle checks the build code of the APK while patching, and the build Patchy downloaded is not one it was written for (`version code N is not supported` in the patcher's output). Patchy then fetches one of the accepted builds from APKMirror and patches again, so on its own this line is only a warning and adds one more download to the build. If the build still fails with `None of the N arm64-v8a builds listed on APKMirror for <version> has a build code the patch accepts`, APKMirror lists no accepted build yet: run the build again later, or pin another version with `force_version`. The release page is saved as `no-accepted-build-<app>-*.html` in the run's `diagnostics-*` artifact. See [How the APKMirror variant is chosen](configuration.md#how-the-apkmirror-variant-is-chosen).
 
+## The installed app is named `@string/...`
+
+The patched manifest stores the app name as plain text that looks like a resource reference (`@string/four_ones` for the 1.1.1.1 app), so Android shows that text as it is. Patchy repairs this after patching: the label of the application and of the launcher activities becomes the build's `display_name`, and the build log says `App name of <application> changed from '@string/four_ones' to '1.1.1.1'`. When a build still shows a wrong name, set `label` for it in its app file, see [App name](configuration.md#app-name). The warning `The app name of ... could not be checked` means the manifest could not be rewritten; the APK was then published as the patcher produced it, and the text after the colon tells why.
+
 ## `Keystore file not found at .../morphe-data/morphe.keystore`
 
 Morphe CLI 1.18.2-dev.1 and 1.18.2-dev.2 check for the patcher's own default keystore before signing and abort when it does not exist, which is always the case on a fresh runner. Patchy starts the patcher with `--unsigned` (the release job signs with your key), so current versions never reach that check. If you still see this message, the workflow is running an older copy of Patchy.

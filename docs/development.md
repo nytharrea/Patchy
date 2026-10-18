@@ -36,8 +36,9 @@ src/patchy/
 │  ├─ github.py        GitHub release downloads and GitHub-hosted apps
 │  └─ bundles.py       patcher CLI, patch bundles, companions, bundles.json manifest
 ├─ engine/
-│  ├─ build.py         one build: version, download, verify, patch, status file with stage timings
+│  ├─ build.py         one build: version, download, verify, patch, app name repair, status file with stage timings
 │  ├─ patcher.py       async patcher CLI wrapper with a per-line watchdog
+│  ├─ label.py         repairs or sets the app name (`android:label`) in the binary manifest of a patched APK
 │  ├─ verify.py        apksigner-based certificate check against the pins
 │  ├─ pins.py          reading, promoting and committing pins
 │  ├─ signer.py        zipalign, apksigner sign and verify

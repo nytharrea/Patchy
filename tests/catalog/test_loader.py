@@ -176,6 +176,44 @@ def test_build_level_display_name_overrides_app_level(monkeypatch, tmp_path):
     assert builds["example-variant"]["display_name"] == "Custom Name"
 
 
+def test_label_defaults_to_none_when_absent(monkeypatch, tmp_path):
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": _minimal_app()})
+    assert builds["example"]["label"] is None
+
+
+def test_app_level_label_is_inherited_by_every_build(monkeypatch, tmp_path):
+    app = _minimal_app(
+        label="Example Name",
+        builds=[{"key": "one", "bundles": ["morphe"]}, {"key": "two", "bundles": ["morphe"]}],
+    )
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": app})
+    assert builds["one"]["label"] == builds["two"]["label"] == "Example Name"
+
+
+def test_build_level_label_overrides_the_app_level_label(monkeypatch, tmp_path):
+    app = _minimal_app(
+        label="Example Name",
+        builds=[
+            {"key": "plain", "bundles": ["morphe"]},
+            {"key": "special", "bundles": ["morphe"], "label": "Special Name"},
+        ],
+    )
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": app})
+    assert builds["plain"]["label"] == "Example Name"
+    assert builds["special"]["label"] == "Special Name"
+
+
+def test_build_level_null_label_removes_the_app_level_label(monkeypatch, tmp_path):
+    app = _minimal_app(label="Example Name", builds=[{"key": "example", "bundles": ["morphe"], "label": None}])
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": app})
+    assert builds["example"]["label"] is None
+
+
+def test_warp_names_its_app_explicitly():
+    assert catalog.BUILDS["warp"]["label"] == "1.1.1.1"
+    assert catalog.BUILDS["warp"]["display_name"] == "1.1.1.1"
+
+
 def test_multiple_builds_under_one_app_each_get_their_own_bundles(monkeypatch, tmp_path):
     app = _minimal_app(
         builds=[

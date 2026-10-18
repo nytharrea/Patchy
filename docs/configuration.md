@@ -39,7 +39,8 @@ builds:
 | Field | Required | Meaning |
 |---|---|---|
 | `pkg` | yes | Android package name, passed to the CLI's `list-versions` |
-| `display_name` | yes | Name used in release asset file names and notes |
+| `display_name` | yes | Name used in release asset file names and notes. It is also the name Patchy puts on an app whose patched manifest lost its real name, see [App name](#app-name) |
+| `label` | no | Name the installed app shows, written into the patched APK whatever the patcher produced, see [App name](#app-name) |
 | `arch` | yes | Architecture kept by `--striplibs` and looked for on APKMirror, usually `arm64-v8a` |
 | `icon` | yes | Icon URL shown in the release notes |
 | `apk_source` | yes | Where the original APK comes from, see below |
@@ -61,6 +62,7 @@ For `github`, `tag_template` turns the version the patch bundle supports into th
 | `key` | yes | Unique across all files. It is the CI matrix entry and appears in release file names |
 | `bundles` | yes | One or more keys from `config/bundles.yaml` |
 | `display_name` | no | Overrides the app's name for this build |
+| `label` | no | Overrides the app's `label` for this build; `label: null` removes it |
 | `exclude` | no | List of patch names passed as `--disable` |
 | `enable` | no | List of patch names passed as `--enable` |
 | `options` | no | Mapping of `"Patch name.optionKey"` to a value, passed as `-O` options |
@@ -68,6 +70,20 @@ For `github`, `tag_template` turns the version the patch bundle supports into th
 | `force_build` | no | Only consider APKMirror rows whose text contains this value, such as a build code or a density. Rarely needed, see [How the APKMirror variant is chosen](#how-the-apkmirror-variant-is-chosen) |
 
 When several builds of one app share a display name, the release file name gets a suffix taken from the first bundle's repository owner (or the build key when that is not unique).
+
+### App name
+
+Android takes the name of an app from the `android:label` attribute of its `AndroidManifest.xml`. Normally that attribute is a reference to a string resource, which the system resolves when it shows the name. When the patched manifest holds the plain text of such a reference instead (`@string/four_ones`, for example), nothing resolves it, and the installer, the launcher and the app list show that text as the name of the app.
+
+After patching, Patchy checks the label of the `<application>` element and of every launcher activity:
+
+- A label that is the text of a resource reference is replaced by the build's `display_name`.
+- A label that is a real resource reference, or ordinary text, is left alone.
+- With `label` set, the build's name is written into all of those places whatever they contain. Use it when an app shows a wrong name although nothing looks broken, or when the app should carry another name than the original. Leave it out for builds whose patch bundle sets the name itself (a branding option, for example), or the patched name is overwritten. The name no longer follows the language of the device, because a fixed text cannot be translated.
+
+Only `AndroidManifest.xml` is rewritten. The new name is appended to the manifest's string pool and the label attributes point to it. Every other file of the APK keeps its content, and the result is checked (same files, sizes and checksums, a readable zip, a second pass that finds nothing left to repair) before it replaces the patcher's copy. The patcher's own output is not touched. Zipalign and signing happen afterwards in the release job, as for every APK.
+
+The build log shows what was done, for example `App name of <application> changed from '@string/four_ones' to '1.1.1.1'`, or `App name needs no repair`. When the manifest cannot be rewritten (an unexpected format, or `label` set for an APK that has no `android:label` to replace), the log carries a warning and the APK is published as the patcher produced it; the build does not fail.
 
 ### How the version is chosen
 

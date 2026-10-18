@@ -35,6 +35,7 @@ class BuildConfig(TypedDict):
     app_slug: str
     pkg: str
     display_name: str
+    label: str | None
     arch: str
     icon: str
     apk_source: ApkSource

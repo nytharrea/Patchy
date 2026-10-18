@@ -1,4 +1,5 @@
 from ..core.settings import settings
+from ..engine.label import MAX_LABEL_LENGTH
 from . import BUILDS, BUNDLES, COMPANIONS
 
 
@@ -29,6 +30,13 @@ def validate_catalog() -> None:
                     f"(a bare string would get patch_apk() to pass one --disable/--enable flag per "
                     f"character instead of one per patch name)."
                 )
+
+        label = build.get("label")
+        if label is not None and not (isinstance(label, str) and label.strip() and len(label) <= MAX_LABEL_LENGTH):
+            problems.append(
+                f'Build "{key}".label should be a text of 1 to {MAX_LABEL_LENGTH} characters, got {label!r} '
+                f"(it becomes the app name shown by Android, see the App name section of docs/configuration.md)."
+            )
 
         options = build.get("options")
         if options is not None:

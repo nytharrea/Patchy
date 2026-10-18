@@ -12,6 +12,7 @@ from ..catalog.models import ApkMirrorSource, BuildConfig
 from ..core import log, paths
 from ..fetch import apkmirror, github
 from ..fetch.bundles import Tools
+from .label import fix_apk_label
 from .patcher import UnsupportedBuild, list_versions, patch_apk
 from .verify import UnpinnedSignature, verify_apk_signature
 from .versions import extract_cli_version_codes, extract_cli_versions, file_name_version, rank_versions
@@ -140,6 +141,21 @@ async def _refetch_accepted(
     return apk_path
 
 
+def _fix_app_label(apk: Path, label: str | None, fallback: str) -> None:
+    try:
+        changes = fix_apk_label(apk, label, fallback)
+    except Exception as err:
+        log.warn(
+            f"The app name of {apk.name} could not be checked, so it keeps the name the patcher gave it: {err}"
+        )
+        return
+
+    if not changes:
+        log.step("App name needs no repair")
+    for change in changes:
+        log.success(f"App name of <{change.element}> changed from {change.before!r} to {change.after!r}")
+
+
 async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> dict | None:
     build = catalog.BUILDS[build_key]
     app_slug = build["app_slug"]
@@ -197,6 +213,7 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
     final_path = out_dir / final_name
 
     shutil.copyfile(patched_apk, final_path)
+    _fix_app_label(final_path, build.get("label"), display_name)
 
     return {
         "app_name": app_slug,

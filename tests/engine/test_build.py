@@ -1,13 +1,16 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from patchy import catalog
-from patchy.engine import build
+from patchy.engine import build, label
 from patchy.engine.verify import SignatureError, UnpinnedSignature
 from patchy.fetch import apkmirror, github
 from patchy.fetch.bundles import Tools
+
+from .axml import apk_labels, build_apk, build_manifest, reference_label, text_label
 
 FINGERPRINT = "3d7a1223019aa39d9ea0e3436ab7c0896bfb4fb679f4de5fe7c23f326c8f994a"
 
@@ -18,6 +21,7 @@ def _fake_build(app_slug: str, source: dict, force_version: str | None = "1.2.3"
         "app_slug": app_slug,
         "pkg": f"com.example.{app_slug}",
         "display_name": app_slug.title(),
+        "label": None,
         "arch": "arm64-v8a",
         "icon": "https://example.com/icon.png",
         "apk_source": source,
@@ -219,6 +223,107 @@ async def test_process_build_returns_none_when_patch_apk_did_not_produce_a_file(
     monkeypatch.setattr(build, "patch_apk", fake_patch)
 
     assert await build.process_build(build_key, "desktop.jar", ["patch1.mpp"]) is None
+
+
+GITHUB_SOURCE = {"type": "github", "owner": "acme-inc", "repo": "acme-app"}
+BROKEN_NAME = text_label("@string/four_ones")
+WORKING_NAME = reference_label(0x7F130012)
+
+
+def _patched_apk_with(monkeypatch, tmp_path, manifest, app_label=None):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    catalog.BUILDS[build_key]["label"] = app_label
+    patched = build_apk(tmp_path / "patched.apk", manifest)
+
+    async def fake_download(version, app_slug, source):
+        return str(tmp_path / "downloaded.apk")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+    return build_key, patched
+
+
+async def test_process_build_repairs_an_app_name_the_patcher_left_as_reference_text(monkeypatch, tmp_path):
+    build_key, _ = _patched_apk_with(monkeypatch, tmp_path, build_manifest(BROKEN_NAME))
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert apk_labels(Path(result["path"]))[0] == ("application", label.TYPE_STRING, "The App")
+
+
+async def test_process_build_gives_the_app_the_label_configured_for_the_build(monkeypatch, tmp_path):
+    manifest = build_manifest(WORKING_NAME, launcher=WORKING_NAME)
+    build_key, _ = _patched_apk_with(monkeypatch, tmp_path, manifest, app_label="1.1.1.1")
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert apk_labels(Path(result["path"])) == [
+        ("application", label.TYPE_STRING, "1.1.1.1"),
+        ("activity", label.TYPE_STRING, "1.1.1.1"),
+        ("activity", label.TYPE_STRING, "Other"),
+    ]
+
+
+async def test_process_build_does_not_touch_an_apk_whose_app_name_is_fine(monkeypatch, tmp_path):
+    build_key, patched = _patched_apk_with(monkeypatch, tmp_path, build_manifest(WORKING_NAME))
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert Path(result["path"]).read_bytes() == patched.read_bytes()
+
+
+async def test_process_build_leaves_the_output_of_the_patcher_as_it_was(monkeypatch, tmp_path):
+    build_key, patched = _patched_apk_with(monkeypatch, tmp_path, build_manifest(BROKEN_NAME))
+    before = patched.read_bytes()
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert patched.read_bytes() == before
+    assert Path(result["path"]).read_bytes() != before
+
+
+async def test_process_build_goes_on_when_the_apk_cannot_be_examined(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    async def fake_download(version, app_slug, source):
+        return str(tmp_path / "downloaded.apk")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["name"] == "The App-1.2.3.apk"
+    assert Path(result["path"]).read_bytes() == b"fake patched apk"
+    assert any("app name" in line and "The App-1.2.3.apk" in line for line in warnings)
+
+
+async def test_process_build_goes_on_when_the_app_name_step_crashes(monkeypatch, tmp_path):
+    build_key, patched = _patched_apk_with(monkeypatch, tmp_path, build_manifest(BROKEN_NAME))
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    def crashing(apk, app_label, fallback):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(build, "fix_apk_label", crashing)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert Path(result["path"]).read_bytes() == patched.read_bytes()
+    assert any("boom" in line for line in warnings)
+
+
+async def test_process_build_warns_when_the_configured_label_has_nothing_to_replace(monkeypatch, tmp_path):
+    manifest = build_manifest(None, launcher=None)
+    build_key, patched = _patched_apk_with(monkeypatch, tmp_path, manifest, app_label="1.1.1.1")
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert Path(result["path"]).read_bytes() == patched.read_bytes()
+    assert any("no android:label" in line for line in warnings)
 
 
 async def test_process_build_falls_through_to_latest_for_github_without_version_data(monkeypatch, tmp_path):

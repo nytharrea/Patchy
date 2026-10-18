@@ -132,6 +132,7 @@ def load_builds() -> dict[str, BuildConfig]:
                     "app_slug": app_slug,
                     "pkg": app["pkg"],
                     "display_name": build.get("display_name", app["display_name"]),
+                    "label": build.get("label", app.get("label")),
                     "arch": app["arch"],
                     "icon": app["icon"],
                     "apk_source": apk_source,

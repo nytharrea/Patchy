@@ -1,6 +1,7 @@
 import pytest
 
 from patchy.catalog import validate
+from patchy.engine.label import MAX_LABEL_LENGTH
 
 
 def test_real_catalog_passes_validation():
@@ -89,6 +90,19 @@ def test_options_as_a_list_instead_of_a_dict_is_caught(monkeypatch):
 def test_options_key_without_a_dot_is_caught(monkeypatch):
     monkeypatch.setitem(validate.BUILDS, "youtube", {**_youtube_build(), "options": {"NoDotHere": "x"}})
     with pytest.raises(validate.ConfigError, match="Patch name.optionKey"):
+        validate.validate_catalog()
+
+
+@pytest.mark.parametrize("value", [None, "YouTube Özel", "x" * MAX_LABEL_LENGTH])
+def test_valid_labels_pass(monkeypatch, value):
+    monkeypatch.setitem(validate.BUILDS, "youtube", {**_youtube_build(), "label": value})
+    validate.validate_catalog()
+
+
+@pytest.mark.parametrize("value", ["", "   ", "x" * (MAX_LABEL_LENGTH + 1), 123, ["a list"]])
+def test_label_that_cannot_be_an_app_name_is_caught(monkeypatch, value):
+    monkeypatch.setitem(validate.BUILDS, "youtube", {**_youtube_build(), "label": value})
+    with pytest.raises(validate.ConfigError, match='Build "youtube".label should be a text'):
         validate.validate_catalog()
 
 
