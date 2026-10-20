@@ -14,7 +14,7 @@ dependencies = [
     "tenacity>=9.2.1,<10",
     "loguru>=0.7.3,<0.8",
     "apprise>=2.0.0,<3",
-    "pydantic-settings>=2.15.0,<3",
+    "pydantic-settings>=2.16.0,<3",
     "PyYAML>=6.0.3,<7",
 ]
 
