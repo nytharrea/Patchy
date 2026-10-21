@@ -1,0 +1,19 @@
+Third-party software shipped with this site
+===========================================
+
+glassy-liquid 0.1.0
+  Liquid Glass web components (refraction, specular light, iOS 26 style controls).
+  License: MIT, Copyright (c) 2026 thirtynine
+  Source: https://github.com/9und30/glassy-liquid (commit f9f701d5de0a10dfaefbba6d6af6f977850d9957)
+  File: assets/vendor/glassy-liquid.min.js, built from src/elements.ts with esbuild (bundle, minify, ESM).
+  License text: assets/vendor/LICENSE-glassy-liquid.txt
+
+Inter and Inter Display
+  Typeface by Rasmus Andersson and The Inter Project Authors.
+  License: SIL Open Font License 1.1
+  Files: assets/fonts/inter-400.woff, inter-600.woff, inter-display-700.woff (Latin and Turkish subsets, converted to WOFF)
+  License text: assets/fonts/OFL.txt
+
+App icons
+  The icons on the app cards are loaded at run time from the addresses configured in config/apps/*.yaml (Simple Icons CDN).
+  They are trademarks of their respective owners and are not hosted by this site.

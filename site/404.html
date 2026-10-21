@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>404 | Patchy</title>
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#04151c">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<link rel="icon" href="__SITE_URL__/favicon.svg" type="image/svg+xml">
+<style>
+:root {
+  --bg-base: #04151c;
+  --bg-a: #19d3c5;
+  --bg-b: #4b3fd1;
+  --bg-c: #0c7a8c;
+  --ink: #f2fffd;
+  --ink-soft: rgba(242, 255, 253, 0.74);
+  --ink-faint: rgba(242, 255, 253, 0.52);
+  --dot: rgba(255, 255, 255, 0.16);
+  --ring: #15a99b;
+  --ring-fill: rgba(47, 217, 200, 0.14);
+  --prime: #2fd9c8;
+  --prime-hover: #5ae8d9;
+  --prime-ink: #032a2e;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-base: #e6f6f4;
+    --bg-a: #7fe9db;
+    --bg-b: #b9a9ff;
+    --bg-c: #9fd8ee;
+    --ink: #06262d;
+    --ink-soft: rgba(6, 38, 45, 0.76);
+    --ink-faint: rgba(6, 38, 45, 0.56);
+    --dot: rgba(6, 38, 45, 0.12);
+    --ring: #0a8f83;
+    --ring-fill: rgba(20, 196, 179, 0.16);
+    --prime: #14c4b3;
+    --prime-hover: #0fb0a0;
+    --prime-ink: #032a2e;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html {
+  min-height: 100%;
+  background: var(--bg-base);
+}
+
+body {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 32px 20px;
+  color: var(--ink);
+  font-family: var(--font);
+  text-align: center;
+  -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(60vmax 60vmax at 12% 6%, var(--bg-a) 0%, transparent 60%),
+    radial-gradient(50vmax 50vmax at 96% 16%, var(--bg-b) 0%, transparent 62%),
+    radial-gradient(70vmax 70vmax at 52% 98%, var(--bg-c) 0%, transparent 62%),
+    var(--bg-base);
+}
+
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--dot) 1.3px, transparent 1.5px);
+  background-size: 22px 22px;
+  pointer-events: none;
+}
+
+main {
+  position: relative;
+  max-width: 460px;
+}
+
+.ring {
+  display: grid;
+  place-items: center;
+  width: 164px;
+  height: 164px;
+  margin: 0 auto 30px;
+  border-radius: 50%;
+  background: var(--ring-fill);
+  border: 3px dashed var(--ring);
+  font-size: 54px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+h1 {
+  font-size: clamp(28px, 7vw, 38px);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+}
+
+p {
+  margin-top: 12px;
+  color: var(--ink-soft);
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+p.en {
+  margin-top: 6px;
+  color: var(--ink-faint);
+  font-size: 15px;
+}
+
+a.home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  margin-top: 30px;
+  padding: 0 26px;
+  border-radius: 999px;
+  background: var(--prime);
+  color: var(--prime-ink);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 12px 26px -14px var(--prime);
+}
+
+a.home:hover {
+  background: var(--prime-hover);
+}
+
+a.home:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="ring" aria-hidden="true">404</div>
+  <h1>Sayfa bulunamadı</h1>
+  <p>Aradığın sayfa yok ya da taşınmış olabilir.</p>
+  <p class="en" lang="en">Page not found. It may have moved or never existed.</p>
+  <a class="home" href="__SITE_URL__/">Ana sayfaya dön</a>
+</main>
+</body>
+</html>

@@ -32,6 +32,7 @@ A separate `ci.yml` runs `ruff`, `mypy` and `pytest` on every push and pull requ
 | [Workflows](docs/workflows.md) | Jobs, inputs, artifacts and build telemetry of `release.yml` and `ci.yml` |
 | [Development](docs/development.md) | Project layout, `uv`, tests, CLI and environment reference |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures and what to do about them |
+| [Site](docs/site.md) | The GitHub Pages site: deploy, data flow, local preview, customizing |
 
 ## Layout
 
@@ -41,10 +42,10 @@ patchy/
 ├─ src/patchy/    cli.py, catalog/, fetch/, engine/, publish/, core/
 ├─ tests/         mirrors src/patchy
 ├─ pins/          known.json, pending.json
-├─ site/          static site files
+├─ site/          GitHub Pages site (static, no build step)
 ├─ docs/
 ├─ build/         all generated files (ignored by git)
-└─ .github/workflows/   ci.yml, release.yml
+└─ .github/workflows/   ci.yml, release.yml, pages.yml
 ```
 
 ## License
