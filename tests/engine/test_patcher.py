@@ -227,11 +227,34 @@ async def test_raises_when_zero_patches_applied(monkeypatch, tmp_path):
         await patcher.patch_apk("desktop.jar", [], "input.apk")
 
 
+async def test_a_run_that_applies_no_patch_is_a_patch_failure(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path, ["Applying 0 patches..."])
+
+    with pytest.raises(patcher.PatchFailed, match="0 patches"):
+        await patcher.patch_apk("desktop.jar", [], "input.apk")
+
+
 async def test_raises_on_nonzero_exit_code(monkeypatch, tmp_path):
     _patch_common(monkeypatch, tmp_path, ["some error output"], returncode=1)
 
     with pytest.raises(RuntimeError, match="exit 1"):
         await patcher.patch_apk("desktop.jar", ["p"], "input.apk")
+
+
+async def test_a_failed_patch_run_is_a_patch_failure(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path, ["some error output"], returncode=1)
+
+    with pytest.raises(patcher.PatchFailed, match="exit 1"):
+        await patcher.patch_apk("desktop.jar", ["p"], "input.apk")
+
+
+def test_patch_failures_are_runtime_errors_and_a_rejected_build_is_one_of_them():
+    assert issubclass(patcher.PatchFailed, RuntimeError)
+    assert issubclass(patcher.UnsupportedBuild, patcher.PatchFailed)
+
+
+def test_a_timeout_is_not_a_patch_failure():
+    assert not issubclass(patcher.PatchTimeout, patcher.PatchFailed)
 
 
 HUSH_REJECTION = [
@@ -273,6 +296,69 @@ def test_unsupported_build_is_none_for_other_failures():
     assert patcher.unsupported_build("") is None
 
 
+HUSH_REWORDED_REJECTION = [
+    'ERROR: Patching aborted: Patching failed: Patch "Allow chat bubbles" failed: The patch "Allow chat bubbles" '
+    'depends on "BytecodePatch@685244920", which raised an exception:',
+    'app.morphe.patcher.patch.PatchException: The patch "BytecodePatch@685244920" depends on '
+    '"ResourcePatch@458816147", which raised an exception:',
+    "app.morphe.patcher.patch.PatchException: This Messenger build (version code 346611349) isn't supported yet, "
+    "so nothing was patched. Use an unmodified arm64 Messenger 583.0.0.29.95 APK (version code 346611350 or "
+    "346611351 or 346611353 or 346611369 or 346611386 or 346611418 or 346611420 or 346611422 or 346611423 or "
+    "346611435 or 346611436 or 346611438 or 346611439 or 346611440). APKMirror lists the version code of every "
+    "download.",
+]
+HUSH_REWORDED_ACCEPTED = frozenset(
+    {
+        346611350,
+        346611351,
+        346611353,
+        346611369,
+        346611386,
+        346611418,
+        346611420,
+        346611422,
+        346611423,
+        346611435,
+        346611436,
+        346611438,
+        346611439,
+        346611440,
+    }
+)
+
+
+def test_unsupported_build_reads_the_codes_from_the_reworded_patch_message():
+    output = "\n".join(HUSH_REWORDED_REJECTION)
+
+    assert patcher.unsupported_build(output) == (346611349, HUSH_REWORDED_ACCEPTED)
+
+
+@pytest.mark.parametrize(
+    "wording",
+    [
+        "is not supported",
+        "isn't supported yet",
+        "isn’t supported yet",
+        "is not yet supported",
+        "is unsupported",
+        "is incompatible",
+        "is not compatible",
+        "doesn't support this build",
+        "does not support this build",
+        "IS NOT SUPPORTED",
+    ],
+)
+def test_unsupported_build_recognises_the_ways_a_patch_may_word_a_rejection(wording):
+    output = f"This build (version code 5) {wording}. Use a build (version code 6 or 7)."
+
+    assert patcher.unsupported_build(output) == (5, frozenset({6, 7}))
+
+
+def test_unsupported_build_ignores_messages_that_do_not_reject_a_build():
+    assert patcher.unsupported_build("Supported builds (version code 6 or 7), yours is (version code 5).") is None
+    assert patcher.unsupported_build("Patched (version code 5). Other builds: (version code 6 or 7).") is None
+
+
 async def test_a_rejected_build_raises_unsupported_build_with_the_accepted_codes(monkeypatch, tmp_path):
     _patch_common(monkeypatch, tmp_path, HUSH_REJECTION, returncode=1)
 
@@ -282,6 +368,16 @@ async def test_a_rejected_build_raises_unsupported_build_with_the_accepted_codes
     assert exc_info.value.rejected == 346611418
     assert exc_info.value.accepted == HUSH_ACCEPTED
     assert "version code 346611418 is not supported" in str(exc_info.value)
+
+
+async def test_a_rejected_build_is_recognised_from_the_reworded_message_too(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path, HUSH_REWORDED_REJECTION, returncode=1)
+
+    with pytest.raises(patcher.UnsupportedBuild, match="exit 1") as exc_info:
+        await patcher.patch_apk("desktop.jar", ["p"], "input.apk")
+
+    assert exc_info.value.rejected == 346611349
+    assert exc_info.value.accepted == HUSH_REWORDED_ACCEPTED
 
 
 def test_unsupported_build_is_a_runtime_error_so_callers_report_it_like_any_failure():
@@ -398,6 +494,35 @@ async def test_list_versions_returns_stdout_and_keeps_stderr_separate(monkeypatc
     ]
     assert captured["stderr_to_stdout"] is False
     assert captured["env"] is None
+
+
+async def test_list_versions_leaves_experimental_versions_out_when_asked_to(monkeypatch):
+    captured = {}
+
+    async def fake_run(cmd, *, timeout, env=None, stderr_to_stdout=True):
+        captured["cmd"] = cmd
+        return Completed(0, "Most common compatible versions:\n9.9.9 (3 patches)\n", "")
+
+    monkeypatch.setattr(patcher, "run_capture", fake_run)
+
+    await patcher.list_versions("cli.jar", ["a.mpp"], "com.example.app", include_experimental=False)
+
+    assert "--include-experimental" not in captured["cmd"]
+    assert captured["cmd"][-2:] == ["--patches", "a.mpp"]
+
+
+async def test_list_versions_includes_experimental_versions_unless_told_otherwise(monkeypatch):
+    captured = {}
+
+    async def fake_run(cmd, *, timeout, env=None, stderr_to_stdout=True):
+        captured["cmd"] = cmd
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(patcher, "run_capture", fake_run)
+
+    await patcher.list_versions("cli.jar", ["a.mpp"], "com.example.app")
+
+    assert captured["cmd"][-1] == "--include-experimental"
 
 
 async def test_list_versions_returns_none_and_warns_when_the_cli_fails(monkeypatch):

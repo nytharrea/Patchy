@@ -25,6 +25,7 @@ def _fake_build(app_slug: str, source: dict, force_version: str | None = "1.2.3"
         "arch": "arm64-v8a",
         "icon": "https://example.com/icon.png",
         "apk_source": source,
+        "apk_type": None,
         "bundles": ["some-source"],
         "exclude": [],
         "enable": [],
@@ -54,7 +55,7 @@ def _common_mocks(monkeypatch, tmp_path, apk_source: dict, force_version: str | 
 
     monkeypatch.setattr(build, "patch_apk", fake_patch)
 
-    async def fake_list_versions(cli_jar, bundles, pkg):
+    async def fake_list_versions(cli_jar, bundles, pkg, include_experimental=True):
         return None
 
     monkeypatch.setattr(build, "list_versions", fake_list_versions)
@@ -64,12 +65,23 @@ def _common_mocks(monkeypatch, tmp_path, apk_source: dict, force_version: str | 
 def _list_versions_returns(monkeypatch, output):
     calls = []
 
-    async def fake_list_versions(cli_jar, bundles, pkg):
-        calls.append((str(cli_jar), [str(b) for b in bundles], pkg))
+    async def fake_list_versions(cli_jar, bundles, pkg, include_experimental=True):
+        calls.append((str(cli_jar), [str(b) for b in bundles], pkg, include_experimental))
         return output
 
     monkeypatch.setattr(build, "list_versions", fake_list_versions)
     return calls
+
+
+def _list_versions_by_mode(monkeypatch, *, all_versions, stable_versions):
+    modes = []
+
+    async def fake_list_versions(cli_jar, bundles, pkg, include_experimental=True):
+        modes.append(include_experimental)
+        return all_versions if include_experimental else stable_versions
+
+    monkeypatch.setattr(build, "list_versions", fake_list_versions)
+    return modes
 
 
 async def test_process_build_calls_apkmirror_fetcher_for_an_apkmirror_source(monkeypatch, tmp_path):
@@ -433,7 +445,12 @@ async def test_process_build_hands_the_build_codes_of_the_chosen_version_to_the_
 
     await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert calls == [("9.9.9", {"arch": "arm64-v8a", "build_codes": {"ARM64_V8A": 990, "ARMEABI_V7A": 991}})]
+    assert calls == [
+        (
+            "9.9.9",
+            {"arch": "arm64-v8a", "build_codes": {"ARM64_V8A": 990, "ARMEABI_V7A": 991}, "file_type": None},
+        )
+    ]
 
 
 async def test_process_build_passes_the_arch_of_the_build(monkeypatch, tmp_path):
@@ -456,7 +473,7 @@ async def test_process_build_passes_no_build_codes_when_the_bundle_declares_none
 
     await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert calls == [("9.9.9", {"arch": "arm64-v8a", "build_codes": {}})]
+    assert calls == [("9.9.9", {"arch": "arm64-v8a", "build_codes": {}, "file_type": None})]
 
 
 async def test_process_build_passes_no_build_codes_without_cli_versions(monkeypatch, tmp_path):
@@ -472,7 +489,7 @@ async def test_process_build_passes_no_build_codes_without_cli_versions(monkeypa
 
     await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert calls == [("9.9.9", {"arch": "arm64-v8a", "build_codes": {}})]
+    assert calls == [("9.9.9", {"arch": "arm64-v8a", "build_codes": {}, "file_type": None})]
 
 
 NO_BUILD_CODES = "Most common compatible versions:\n9.9.9 (3 patches)\n\n"
@@ -515,8 +532,14 @@ async def test_process_build_fetches_a_build_the_patch_accepts_when_it_rejects_t
 
     assert result is not None
     assert downloads == [
-        {"force_build": None, "arch": "arm64-v8a", "build_codes": {}},
-        {"force_build": None, "arch": "arm64-v8a", "build_codes": {}, "accepted_codes": frozenset({880, 881})},
+        {"force_build": None, "arch": "arm64-v8a", "build_codes": {}, "file_type": None},
+        {
+            "force_build": None,
+            "arch": "arm64-v8a",
+            "build_codes": {},
+            "accepted_codes": frozenset({880, 881}),
+            "file_type": None,
+        },
     ]
     assert patched == [str(tmp_path / "downloaded-1.apk"), str(tmp_path / "downloaded-2.apk")]
 
@@ -677,8 +700,11 @@ async def test_process_build_moves_on_to_the_next_supported_version_when_apkmirr
     assert result["version"] == "8.8.8"
     assert result["name"] == "The App-8.8.8.apk"
     assert calls == [
-        ("9.9.9", {"arch": "arm64-v8a", "build_codes": {"ARM64_V8A": 990, "ARMEABI_V7A": 991}}),
-        ("8.8.8", {"arch": "arm64-v8a", "build_codes": {"ARM64_V8A": 880}}),
+        (
+            "9.9.9",
+            {"arch": "arm64-v8a", "build_codes": {"ARM64_V8A": 990, "ARMEABI_V7A": 991}, "file_type": None},
+        ),
+        ("8.8.8", {"arch": "arm64-v8a", "build_codes": {"ARM64_V8A": 880}, "file_type": None}),
     ]
     assert any("version 9.9.9" in line and "Trying 8.8.8" in line for line in warnings)
 
@@ -747,7 +773,7 @@ async def test_process_build_looks_up_the_build_codes_of_a_pinned_apkmirror_vers
 
     assert len(ran) == 1
     assert result["version"] == "8.8.8"
-    assert calls == [("8.8.8", {"arch": "arm64-v8a", "build_codes": {"ARM64_V8A": 880}})]
+    assert calls == [("8.8.8", {"arch": "arm64-v8a", "build_codes": {"ARM64_V8A": 880}, "file_type": None})]
 
 
 async def test_process_build_keeps_the_pinned_version_when_the_cli_does_not_list_it(monkeypatch, tmp_path):
@@ -758,7 +784,7 @@ async def test_process_build_keeps_the_pinned_version_when_the_cli_does_not_list
 
     await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert calls == [("1.2.3", {"arch": "arm64-v8a", "build_codes": {}})]
+    assert calls == [("1.2.3", {"arch": "arm64-v8a", "build_codes": {}, "file_type": None})]
 
 
 async def test_process_build_goes_on_without_build_codes_when_the_pinned_lookup_fails(monkeypatch, tmp_path):
@@ -766,7 +792,7 @@ async def test_process_build_goes_on_without_build_codes_when_the_pinned_lookup_
     build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version="1.2.3")
     monkeypatch.setattr(build.log, "warn", lambda msg: None)
 
-    async def exploding(cli_jar, bundles, pkg):
+    async def exploding(cli_jar, bundles, pkg, include_experimental=True):
         raise OSError("java is missing")
 
     monkeypatch.setattr(build, "list_versions", exploding)
@@ -775,7 +801,7 @@ async def test_process_build_goes_on_without_build_codes_when_the_pinned_lookup_
     result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
     assert result is not None
-    assert calls == [("1.2.3", {"arch": "arm64-v8a", "build_codes": {}})]
+    assert calls == [("1.2.3", {"arch": "arm64-v8a", "build_codes": {}, "file_type": None})]
 
 
 async def test_process_build_does_not_ask_the_cli_about_a_pinned_github_version(monkeypatch, tmp_path):
@@ -798,7 +824,7 @@ async def test_process_build_survives_a_list_versions_crash(monkeypatch, tmp_pat
     build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
     monkeypatch.setattr(build.log, "warn", lambda msg: None)
 
-    async def exploding(cli_jar, bundles, pkg):
+    async def exploding(cli_jar, bundles, pkg, include_experimental=True):
         raise OSError("java is missing")
 
     calls = []
@@ -813,6 +839,295 @@ async def test_process_build_survives_a_list_versions_crash(monkeypatch, tmp_pat
     await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
     assert calls == ["latest"]
+
+
+EXPERIMENTAL_FIRST = (
+    "Most common compatible versions:\n\t9.9.9 (3 patches)\n\t8.8.8 (3 patches)\n\t7.7.7 (2 patches)\n\n"
+)
+STABLE_ONLY = "Most common compatible versions:\n\t8.8.8 (3 patches)\n\t7.7.7 (2 patches)\n\n"
+THREE_STABLE_VERSIONS = (
+    "Most common compatible versions:\n\t8.8.8 (3 patches)\n\t7.7.7 (3 patches)\n\t6.6.6 (3 patches)\n\n"
+)
+
+
+def _versioned_apkmirror_downloads(monkeypatch, tmp_path):
+    downloads = []
+
+    async def fake_download(version, app_slug, source, force_build, **kwargs):
+        downloads.append({"version": version, "force_build": force_build, **kwargs})
+        return str(tmp_path / f"downloaded-{version}.apk")
+
+    monkeypatch.setattr(apkmirror, "download_apk", fake_download)
+    return downloads
+
+
+def _patch_failing_for(monkeypatch, tmp_path, failing, error=None):
+    patched = []
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        name = Path(apk).name
+        patched.append(name)
+        if any(version in name for version in failing):
+            raise error or build.PatchFailed(f"Patch failed for {name}")
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+    return patched
+
+
+async def test_process_build_falls_back_to_a_stable_version_when_the_experimental_one_cannot_be_patched(
+    monkeypatch, tmp_path
+):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    modes = _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    patched = _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "8.8.8"
+    assert result["name"] == "The App-8.8.8.apk"
+    assert [download["version"] for download in downloads] == ["9.9.9", "8.8.8"]
+    assert patched == ["downloaded-9.9.9.apk", "downloaded-8.8.8.apk"]
+    assert modes == [True, False]
+    assert any("9.9.9" in line and "experimental" in line and "8.8.8" in line for line in warnings)
+
+
+async def test_process_build_falls_back_to_a_stable_version_when_apkmirror_has_no_page_for_the_tried_ones(
+    monkeypatch, tmp_path
+):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_by_mode(
+        monkeypatch, all_versions=FOUR_SUPPORTED_VERSIONS, stable_versions=THREE_STABLE_VERSIONS
+    )
+    calls = _apkmirror_without_pages_for(monkeypatch, tmp_path, missing={"9.9.9", "8.8.8", "7.7.7"})
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "6.6.6"
+    assert [version for version, _ in calls] == ["9.9.9", "8.8.8", "7.7.7", "6.6.6"]
+
+
+async def test_process_build_falls_back_to_a_stable_version_when_the_refetched_build_is_rejected_too(
+    monkeypatch, tmp_path
+):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _rejecting_patch(monkeypatch, tmp_path, rejections=2)
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "8.8.8"
+    assert [download["version"] for download in downloads] == ["9.9.9", "9.9.9", "8.8.8"]
+
+
+async def test_process_build_falls_back_to_a_stable_version_for_a_github_source(monkeypatch, tmp_path):
+    apk_source = {"type": "github", "owner": "acme-inc", "repo": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = []
+
+    async def fake_download(version, app_slug, source):
+        downloads.append(version)
+        return str(tmp_path / f"downloaded-{version}.apk")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "8.8.8"
+    assert downloads == ["9.9.9", "8.8.8"]
+
+
+async def test_process_build_keeps_the_force_build_pin_and_the_apk_type_for_the_stable_fallback(
+    monkeypatch, tmp_path
+):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    catalog.BUILDS[build_key]["force_build"] = "240-640dpi"
+    catalog.BUILDS[build_key]["apk_type"] = "bundle"
+    _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [(download["force_build"], download["file_type"]) for download in downloads] == [
+        ("240-640dpi", "bundle"),
+        ("240-640dpi", "bundle"),
+    ]
+
+
+async def test_process_build_asks_the_cli_for_stable_versions_only_after_a_failure(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    modes = _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+
+    result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "9.9.9"
+    assert [download["version"] for download in downloads] == ["9.9.9"]
+    assert modes == [True]
+
+
+async def test_process_build_does_not_fall_back_when_the_version_that_failed_is_stable(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_by_mode(monkeypatch, all_versions=STABLE_ONLY, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"8.8.8"})
+
+    with pytest.raises(build.PatchFailed, match="downloaded-8.8.8.apk"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["version"] for download in downloads] == ["8.8.8"]
+
+
+async def test_process_build_does_not_fall_back_for_a_pinned_version(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version="9.9.9")
+    modes = _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+
+    with pytest.raises(build.PatchFailed, match="downloaded-9.9.9.apk"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["version"] for download in downloads] == ["9.9.9"]
+    assert modes == [True]
+
+
+async def test_process_build_does_not_fall_back_when_no_stable_version_is_listed(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions="Nothing useful here.\n")
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+
+    with pytest.raises(build.PatchFailed, match="downloaded-9.9.9.apk"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["version"] for download in downloads] == ["9.9.9"]
+
+
+async def test_process_build_does_not_fall_back_when_every_stable_version_was_already_tried(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_by_mode(
+        monkeypatch,
+        all_versions="Most common compatible versions:\n\t9.9.9 (3 patches)\n\t8.8.8 (3 patches)\n\n",
+        stable_versions="Most common compatible versions:\n\t8.8.8 (3 patches)\n\n",
+    )
+    calls = _apkmirror_without_pages_for(monkeypatch, tmp_path, missing={"9.9.9", "8.8.8"})
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    with pytest.raises(apkmirror.ReleaseNotFound, match="8.8.8"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [version for version, _ in calls] == ["9.9.9", "8.8.8"]
+
+
+async def test_process_build_gives_up_when_the_stable_version_cannot_be_patched_either(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    modes = _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9", "8.8.8", "7.7.7"})
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    with pytest.raises(build.PatchFailed, match="downloaded-8.8.8.apk"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["version"] for download in downloads] == ["9.9.9", "8.8.8"]
+    assert modes == [True, False]
+
+
+async def test_process_build_does_not_fall_back_after_a_failure_that_is_not_a_patch_failure(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    modes = _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"}, error=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["version"] for download in downloads] == ["9.9.9"]
+    assert modes == [True]
+
+
+async def test_process_build_reports_the_original_failure_when_the_stable_lookup_crashes(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    async def fake_list_versions(cli_jar, bundles, pkg, include_experimental=True):
+        if not include_experimental:
+            raise OSError("java is missing")
+        return EXPERIMENTAL_FIRST
+
+    monkeypatch.setattr(build, "list_versions", fake_list_versions)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+
+    with pytest.raises(build.PatchFailed, match="downloaded-9.9.9.apk"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["version"] for download in downloads] == ["9.9.9"]
+    assert any("java is missing" in line for line in warnings)
+
+
+async def test_process_build_reports_the_original_failure_when_the_cli_lists_no_stable_versions(
+    monkeypatch, tmp_path
+):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=None)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+
+    with pytest.raises(build.PatchFailed, match="downloaded-9.9.9.apk"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["version"] for download in downloads] == ["9.9.9"]
+
+
+async def test_process_build_hands_the_apk_type_of_the_build_to_the_apkmirror_fetcher(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    catalog.BUILDS[build_key]["apk_type"] = "bundle"
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    calls = _record_apkmirror_downloads(monkeypatch, tmp_path)
+
+    await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert calls[0][1]["file_type"] == "bundle"
+
+
+async def test_process_build_keeps_the_apk_type_when_it_asks_for_another_build(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    catalog.BUILDS[build_key]["apk_type"] = "bundle"
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    downloads = _numbered_apkmirror_downloads(monkeypatch, tmp_path)
+    _rejecting_patch(monkeypatch, tmp_path, rejections=1)
+
+    await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["file_type"] for download in downloads] == ["bundle", "bundle"]
 
 
 def _status(tmp_path, build_key):

@@ -41,6 +41,7 @@ builds:
 | `pkg` | yes | Android package name, passed to the CLI's `list-versions` |
 | `display_name` | yes | Name used in release asset file names and notes. It is also the name Patchy puts on an app whose patched manifest lost its real name, see [App name](#app-name) |
 | `label` | no | Name the installed app shows, written into the patched APK whatever the patcher produced, see [App name](#app-name) |
+| `apk_type` | no | Kind of APKMirror file to prefer, `apk` or `bundle`. Every build of the app inherits it, see [How the APKMirror variant is chosen](#how-the-apkmirror-variant-is-chosen) |
 | `arch` | yes | Architecture kept by `--striplibs` and looked for on APKMirror, usually `arm64-v8a` |
 | `icon` | yes | Icon URL shown in the release notes |
 | `apk_source` | yes | Where the original APK comes from, see below |
@@ -63,6 +64,7 @@ For `github`, `tag_template` turns the version the patch bundle supports into th
 | `bundles` | yes | One or more keys from `config/bundles.yaml` |
 | `display_name` | no | Overrides the app's name for this build |
 | `label` | no | Overrides the app's `label` for this build; `label: null` removes it |
+| `apk_type` | no | Overrides the app's `apk_type` for this build; `apk_type: null` removes it. Only valid for `apkmirror` sources |
 | `exclude` | no | List of patch names passed as `--disable` |
 | `enable` | no | List of patch names passed as `--enable` |
 | `options` | no | Mapping of `"Patch name.optionKey"` to a value, passed as `-O` options |
@@ -89,6 +91,8 @@ The build log shows what was done, for example `App name of <application> change
 
 Patchy asks the patcher (`list-versions`) which versions the selected bundles support, ranks them by the number of patches that apply and then by version number, and downloads the first. A bundle can support a version before APKMirror lists it, or APKMirror can list it only as another kind of build (an F-Droid build, for example). When there is no release page for the chosen version, Patchy moves on to the next supported one, three at the most, and the log names the version it moved to. A version pinned with `force_version` is never replaced. When the bundles list no version at all, the newest release on APKMirror is used.
 
+The list includes experimental versions, the ones a bundle supports but marks as not fully tested (`list-versions --include-experimental`). This is on for every app and is not a setting: the patcher accepts such a version when it is asked to patch, so the newest version a bundle can patch at all is the one that gets built. A newer experimental version can still fail, because a patch finds nothing to match in it or because APKMirror has no release for it yet. When the build then stops while patching, or none of the versions Patchy tried has a release page, Patchy asks `list-versions` once more without experimental versions and builds the newest stable version it has not tried yet. The log says `The patch bundle lists <versions> as experimental, and building it failed. Falling back to <version>, the newest stable version it supports.` The fallback happens at most once per build, never replaces a version pinned with `force_version`, and does not happen when the version that failed was a stable one.
+
 Some bundles list a version together with its release channel, for example `348.10 - Stable` for Discord. Patchy turns that text into the lowercase, dash-separated form APKMirror uses in release addresses (`discord-talk-play-hang-out-348-10-stable-release`) and writes it into the release file name without spaces (`Discord-348.10-Stable.apk`). `force_version` takes the text exactly as the patcher prints it.
 
 ### How the APKMirror variant is chosen
@@ -99,7 +103,9 @@ One APKMirror release often lists many variants of the same version: several CPU
 2. On the release page it keeps the rows that fit the app's `arch` (universal rows fit any architecture) and takes the row whose build code is the one declared for that `arch`. A code the bundle declares for another architecture, found on a row that fits the `arch`, is the second choice.
 3. When the bundle declares no build code, the original rule applies: plain APKs before bundles, `nodpi` before `anydpi` before a specific density, and the first listed row wins. Instagram builds only consider bundle rows.
 4. When the bundle declares codes but no row carries one of them, the original rule applies as well and the log carries a warning that names the declared codes.
-5. Some bundles, HushMessenger for one, list a version without build codes and check the build only while patching. When the patcher stops with `version code N is not supported` and names the build codes it accepts, Patchy fetches the same version again, takes the row that carries one of those codes (the `VARIANT:` line then says `a build code the patch accepts`) and patches a second time. This happens once per build, only for APKMirror sources, and `force_build` still narrows the rows first. When APKMirror lists none of the accepted builds, the build fails with a message that names them.
+5. Some bundles, HushMessenger for one, list a version without build codes and check the build only while patching. When the patcher stops because it does not support the build (`This Messenger build (version code N) isn't supported yet`, or `version code N is not supported`, the wording changes from one bundle release to the next) and names the build codes it accepts, Patchy fetches the same version again, takes the row that carries one of those codes (the `VARIANT:` line then says `a build code the patch accepts`) and patches a second time. This happens once per build, only for APKMirror sources, and `force_build` still narrows the rows first. When APKMirror lists none of the accepted builds, the build fails with a message that names them.
+
+`apk_type` settles the choice between rows that are equally good by build code. `bundle` takes APK Bundle rows (`.apkm`) before plain APKs, `apk` takes plain APKs before bundles, and the density order of rule 3 applies among the rows of the preferred kind. It is a preference and not a filter: a row with a better build code (rules 2 and 5) still wins, and when no row of the preferred kind fits, the other kind is used and the log warns `apk_type is "bundle", but the build picked on APKMirror is a plain APK, so the patch may reject it`. Set it for a bundle that is written for one kind of file. A bundle states that kind as `apkFileType` (`APK`, `APK_REQUIRED`, `APKM` or `XAPK_REQUIRED`), but the patcher's command line does not print it, so Patchy cannot read it by itself. The Proton VPN patches ask for an XAPK, for example, and `proton-vpn` sets `apk_type: "bundle"` for that reason.
 
 The `VARIANT:` line of the build log is followed by the chosen row's build code, architecture, minimum Android, density and the reason it was chosen.
 

@@ -248,6 +248,43 @@ def test_force_version_and_force_build_default_to_none(monkeypatch, tmp_path):
     assert builds["example"]["force_build"] is None
 
 
+def test_apk_type_defaults_to_none_when_absent(monkeypatch, tmp_path):
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": _minimal_app()})
+    assert builds["example"]["apk_type"] is None
+
+
+def test_app_level_apk_type_is_inherited_by_every_build(monkeypatch, tmp_path):
+    app = _minimal_app(
+        apk_type="bundle",
+        builds=[{"key": "one", "bundles": ["morphe"]}, {"key": "two", "bundles": ["morphe"]}],
+    )
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": app})
+    assert builds["one"]["apk_type"] == builds["two"]["apk_type"] == "bundle"
+
+
+def test_build_level_apk_type_overrides_the_app_level_one(monkeypatch, tmp_path):
+    app = _minimal_app(
+        apk_type="bundle",
+        builds=[
+            {"key": "plain", "bundles": ["morphe"]},
+            {"key": "special", "bundles": ["morphe"], "apk_type": "apk"},
+        ],
+    )
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": app})
+    assert builds["plain"]["apk_type"] == "bundle"
+    assert builds["special"]["apk_type"] == "apk"
+
+
+def test_build_level_null_apk_type_removes_the_app_level_one(monkeypatch, tmp_path):
+    app = _minimal_app(apk_type="bundle", builds=[{"key": "example", "bundles": ["morphe"], "apk_type": None}])
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": app})
+    assert builds["example"]["apk_type"] is None
+
+
+def test_proton_vpn_asks_for_the_bundle_that_its_patches_require():
+    assert catalog.BUILDS["proton-vpn"]["apk_type"] == "bundle"
+
+
 def test_options_defaults_to_empty_dict_when_absent(monkeypatch, tmp_path):
     _, builds = _load(monkeypatch, tmp_path, {"myapp": _minimal_app()})
     assert builds["example"]["options"] == {}

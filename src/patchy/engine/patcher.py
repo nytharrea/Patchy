@@ -9,8 +9,12 @@ from ..core.settings import settings
 
 STREAM_LIMIT = 1024 * 1024
 SAVED_PATTERN = re.compile(r"INFO:\s+Saved to\s+([^\r\n]+\.apk)", re.IGNORECASE)
-REJECTED_BUILD_PATTERN = re.compile(r"version code (\d+) is not supported", re.IGNORECASE)
-ACCEPTED_BUILDS_PATTERN = re.compile(r"\(version codes?\s+([^)]*)\)", re.IGNORECASE)
+UNSUPPORTED_WORDING = re.compile(
+    r"(?:\bnot|n['’]t)\s+(?:yet\s+)?(?:support(?:ed|s)?|compatible)|\b(?:unsupported|incompatible)",
+    re.IGNORECASE,
+)
+BUILD_CODE_MENTION = re.compile(r"version codes?\s+(\d+)", re.IGNORECASE)
+ACCEPTED_BUILDS_PATTERN = re.compile(r"\(\s*version codes?\s+([^)]*)\)", re.IGNORECASE)
 DIGITS_PATTERN = re.compile(r"\d+")
 
 
@@ -18,7 +22,11 @@ class PatchTimeout(RuntimeError):
     pass
 
 
-class UnsupportedBuild(RuntimeError):
+class PatchFailed(RuntimeError):
+    pass
+
+
+class UnsupportedBuild(PatchFailed):
     def __init__(self, message: str, rejected: int, accepted: frozenset[int]) -> None:
         super().__init__(message)
         self.rejected = rejected
@@ -26,17 +34,19 @@ class UnsupportedBuild(RuntimeError):
 
 
 def unsupported_build(output: str) -> tuple[int, frozenset[int]] | None:
-    rejected = REJECTED_BUILD_PATTERN.search(output)
-    if rejected is None:
+    if UNSUPPORTED_WORDING.search(output) is None:
         return None
-    code = int(rejected.group(1))
+    mention = BUILD_CODE_MENTION.search(output)
+    if mention is None:
+        return None
+    rejected = int(mention.group(1))
     accepted = {
         int(digits)
         for group in ACCEPTED_BUILDS_PATTERN.findall(output)
         for digits in DIGITS_PATTERN.findall(group)
     }
-    accepted.discard(code)
-    return (code, frozenset(accepted)) if accepted else None
+    accepted.discard(rejected)
+    return (rejected, frozenset(accepted)) if accepted else None
 
 
 def build_patch_command(
@@ -126,14 +136,14 @@ async def patch_apk(
     output = "".join(lines)
 
     if "Applying 0 patches" in output:
-        raise RuntimeError("Applying 0 patches. No compatible patch found or version not supported.")
+        raise PatchFailed("Applying 0 patches. No compatible patch found or version not supported.")
 
     if process.returncode != 0:
         message = f"Patch failed (exit {process.returncode}):\n{output}"
         unsupported = unsupported_build(output)
         if unsupported is not None:
             raise UnsupportedBuild(message, *unsupported)
-        raise RuntimeError(message)
+        raise PatchFailed(message)
 
     match = SAVED_PATTERN.search(output)
     if not match:
@@ -150,11 +160,17 @@ async def patch_apk(
     return patched_apk
 
 
-async def list_versions(cli_jar: str | Path, bundles: Sequence[str | Path], pkg: str) -> str | None:
+async def list_versions(
+    cli_jar: str | Path,
+    bundles: Sequence[str | Path],
+    pkg: str,
+    include_experimental: bool = True,
+) -> str | None:
     cmd = ["java", "-jar", str(cli_jar), "list-versions", "-f", pkg]
     for bundle in bundles:
         cmd += ["--patches", str(bundle)]
-    cmd.append("--include-experimental")
+    if include_experimental:
+        cmd.append("--include-experimental")
 
     result = await run_capture(cmd, timeout=settings.download_timeout, stderr_to_stdout=False)
     if result.returncode != 0:

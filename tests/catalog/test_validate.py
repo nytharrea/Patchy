@@ -106,6 +106,30 @@ def test_label_that_cannot_be_an_app_name_is_caught(monkeypatch, value):
         validate.validate_catalog()
 
 
+@pytest.mark.parametrize("value", [None, "apk", "bundle"])
+def test_valid_apk_types_pass(monkeypatch, value):
+    monkeypatch.setitem(validate.BUILDS, "youtube", {**_youtube_build(), "apk_type": value})
+    validate.validate_catalog()
+
+
+@pytest.mark.parametrize("value", ["", "xapk", "Bundle", 1, ["bundle"]])
+def test_apk_type_that_is_neither_apk_nor_bundle_is_caught(monkeypatch, value):
+    monkeypatch.setitem(validate.BUILDS, "youtube", {**_youtube_build(), "apk_type": value})
+    with pytest.raises(validate.ConfigError, match='Build "youtube".apk_type should be "apk" or "bundle"'):
+        validate.validate_catalog()
+
+
+def test_apk_type_on_a_github_source_is_caught(monkeypatch):
+    github_source = {"type": "github", "owner": "SomeOrg", "repo": "some-repo"}
+    monkeypatch.setitem(
+        validate.BUILDS,
+        "youtube",
+        {**_youtube_build(), "apk_source": github_source, "apk_type": "bundle"},
+    )
+    with pytest.raises(validate.ConfigError, match="only applies to APKMirror"):
+        validate.validate_catalog()
+
+
 def test_companion_for_an_unknown_build_is_caught(monkeypatch):
     companion = {**validate.COMPANIONS["microg"], "for_builds": ["no-such-build"]}
     monkeypatch.setitem(validate.COMPANIONS, "microg", companion)

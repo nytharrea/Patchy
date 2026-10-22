@@ -42,7 +42,23 @@ The row selected by `force_build` has a build code the bundle does not declare f
 
 ## `The patch rejected build code N and accepts ...`
 
-The bundle checks the build code of the APK while patching, and the build Patchy downloaded is not one it was written for (`version code N is not supported` in the patcher's output). Patchy then fetches one of the accepted builds from APKMirror and patches again, so on its own this line is only a warning and adds one more download to the build. If the build still fails with `None of the N arm64-v8a builds listed on APKMirror for <version> has a build code the patch accepts`, APKMirror lists no accepted build yet: run the build again later, or pin another version with `force_version`. The release page is saved as `no-accepted-build-<app>-*.html` in the run's `diagnostics-*` artifact. See [How the APKMirror variant is chosen](configuration.md#how-the-apkmirror-variant-is-chosen).
+The bundle checks the build code of the APK while patching, and the build Patchy downloaded is not one it was written for (`This build (version code N) isn't supported yet` or `version code N is not supported` in the patcher's output; bundles reword that message between releases, and Patchy recognises the usual wordings: not supported, isn't supported, unsupported, incompatible, not compatible). Patchy then fetches one of the accepted builds from APKMirror and patches again, so on its own this line is only a warning and adds one more download to the build. If the build still fails with `None of the N arm64-v8a builds listed on APKMirror for <version> has a build code the patch accepts`, APKMirror lists no accepted build yet: run the build again later, or pin another version with `force_version`. The release page is saved as `no-accepted-build-<app>-*.html` in the run's `diagnostics-*` artifact. See [How the APKMirror variant is chosen](configuration.md#how-the-apkmirror-variant-is-chosen).
+
+## `The patch bundle lists <versions> as experimental, and building it failed`
+
+Not an error by itself. The bundle supports the newest version only as an experimental one, and patching it (or finding its release on APKMirror) failed, so Patchy went on with the newest stable version, as the next line of the log says, and publishes that file when it succeeds. To stop trying the experimental version altogether, pin a version with `force_version`. If the stable version fails too, the build stops with the message of that second failure; see [How the version is chosen](configuration.md#how-the-version-is-chosen).
+
+## `Failed to match the fingerprint`
+
+A patch found nothing to change in the APK it was given, and the whole patching stopped. There are three usual reasons, and the log tells which one applies:
+
+- The version is experimental: Patchy then falls back to a stable version by itself, see the entry above.
+- The file is another compilation of the same release than the one the patch is written for, for example a plain APK where the bundle expects a split bundle (`.apkm`). The `VARIANT:` line shows `apk` or `bundle` for the chosen row. Set `apk_type` for the build, see the entry below.
+- The app moved on and the bundle has not followed yet. Wait for a newer bundle release, or pin the version the bundle supports with `force_version`.
+
+## `apk_type is "bundle", but the build picked on APKMirror is a plain APK`
+
+The build asks for one kind of APKMirror file with `apk_type`, and the release page has no row of that kind that fits the build's `arch` and `force_build`, or the build code the patch declares is only on a row of the other kind. The other kind was used and the patch may reject it. Check the release page on APKMirror: when the bundle is not listed yet, run the build again later; when the patch works with the plain APK after all, remove `apk_type` from the build.
 
 ## The installed app is named `@string/...`
 

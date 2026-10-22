@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .. import catalog
-from ..catalog.models import ApkMirrorSource, BuildConfig
+from ..catalog.models import ApkMirrorSource, ApkSource, BuildConfig
 from ..core import log, paths
 from ..fetch import apkmirror, github
 from ..fetch.bundles import Tools
 from .label import fix_apk_label
-from .patcher import UnsupportedBuild, list_versions, patch_apk
+from .patcher import PatchFailed, UnsupportedBuild, list_versions, patch_apk
 from .verify import UnpinnedSignature, verify_apk_signature
 from .versions import extract_cli_version_codes, extract_cli_versions, file_name_version, rank_versions
 
@@ -23,6 +23,11 @@ MAX_VERSION_ATTEMPTS = 3
 class VersionChoice(NamedTuple):
     version: str
     build_codes: dict[str, int]
+
+
+class StableFallback(NamedTuple):
+    choices: list[VersionChoice]
+    experimental: list[str]
 
 
 def write_status(
@@ -92,10 +97,38 @@ async def _select_versions(
     return [VersionChoice(version, build_codes_by_version.get(version, {})) for version in versions]
 
 
+async def _stable_fallback(
+    build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path], tried: list[str]
+) -> StableFallback | None:
+    build = catalog.BUILDS[build_key]
+    if build.get("force_version"):
+        return None
+
+    try:
+        output = await list_versions(cli_jar, bundle_paths, build["pkg"], include_experimental=False)
+    except Exception as e:
+        log.warn(f"Could not fetch the stable version list: {e}")
+        return None
+    if output is None:
+        return None
+
+    stable = rank_versions(extract_cli_versions(output, build["app_slug"]))
+    experimental = [version for version in tried if version not in stable]
+    remaining = [version for version in stable if version not in tried]
+    if not experimental or not remaining:
+        return None
+
+    attempts = MAX_VERSION_ATTEMPTS if build["apk_source"]["type"] == "apkmirror" else 1
+    codes = extract_cli_version_codes(output)
+    choices = [VersionChoice(version, codes.get(version, {})) for version in remaining[:attempts]]
+    return StableFallback(choices, experimental)
+
+
 async def _download_from_apkmirror(
-    build: BuildConfig, source: ApkMirrorSource, choices: list[VersionChoice]
+    build: BuildConfig, source: ApkMirrorSource, choices: list[VersionChoice], tried: list[str]
 ) -> tuple[str, VersionChoice]:
     async def download(choice: VersionChoice) -> str:
+        tried.append(choice.version)
         return await apkmirror.download_apk(
             choice.version,
             build["app_slug"],
@@ -103,6 +136,7 @@ async def _download_from_apkmirror(
             build.get("force_build"),
             arch=build["arch"],
             build_codes=choice.build_codes,
+            file_type=build.get("apk_type"),
         )
 
     for index, choice in enumerate(choices[:-1]):
@@ -133,6 +167,7 @@ async def _refetch_accepted(
             arch=build["arch"],
             build_codes=selected.build_codes,
             accepted_codes=rejected.accepted,
+            file_type=build.get("apk_type"),
         )
 
     with log.timed("verify"):
@@ -156,26 +191,25 @@ def _fix_app_label(apk: Path, label: str | None, fallback: str) -> None:
         log.success(f"App name of <{change.element}> changed from {change.before!r} to {change.after!r}")
 
 
-async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> dict | None:
-    build = catalog.BUILDS[build_key]
+async def _build_one(
+    build: BuildConfig,
+    source: ApkSource,
+    choices: list[VersionChoice],
+    cli_jar: str | Path,
+    bundle_paths: Sequence[str | Path],
+    tried: list[str],
+) -> tuple[str, VersionChoice]:
     app_slug = build["app_slug"]
-    source = build["apk_source"]
-
-    log.header(f"PROCESSING: {app_slug.upper()}")
-
-    with log.timed("select"):
-        choices = await _select_versions(build_key, cli_jar, bundle_paths)
 
     with log.timed("download"):
         if source["type"] == "apkmirror":
-            apk_path, selected = await _download_from_apkmirror(build, source, choices)
+            apk_path, selected = await _download_from_apkmirror(build, source, choices, tried)
         elif source["type"] == "github":
             selected = choices[0]
+            tried.append(selected.version)
             apk_path = await github.download_apk(selected.version, app_slug, source)
         else:
-            raise RuntimeError(f"Unknown apk_source.type {source['type']!r} for build {build_key!r}")
-
-    selected_version = selected.version
+            raise RuntimeError(f"Unknown apk_source.type {source['type']!r} for build {build['key']!r}")
 
     with log.timed("verify"):
         await verify_apk_signature(apk_path, app_slug)
@@ -193,13 +227,39 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
 
     try:
         with log.timed("patch"):
-            patched_apk = await patch(apk_path)
+            return await patch(apk_path), selected
     except UnsupportedBuild as err:
         if source["type"] != "apkmirror":
             raise
         apk_path = await _refetch_accepted(build, source, selected, err)
         with log.timed("patch"):
-            patched_apk = await patch(apk_path)
+            return await patch(apk_path), selected
+
+
+async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> dict | None:
+    build = catalog.BUILDS[build_key]
+    app_slug = build["app_slug"]
+    source = build["apk_source"]
+
+    log.header(f"PROCESSING: {app_slug.upper()}")
+
+    with log.timed("select"):
+        choices = await _select_versions(build_key, cli_jar, bundle_paths)
+
+    tried: list[str] = []
+    try:
+        patched_apk, selected = await _build_one(build, source, choices, cli_jar, bundle_paths, tried)
+    except (apkmirror.ReleaseNotFound, PatchFailed):
+        fallback = await _stable_fallback(build_key, cli_jar, bundle_paths, tried)
+        if fallback is None:
+            raise
+        log.warn(
+            f"The patch bundle lists {', '.join(fallback.experimental)} as experimental, and building it failed. "
+            f"Falling back to {fallback.choices[0].version}, the newest stable version it supports."
+        )
+        patched_apk, selected = await _build_one(build, source, fallback.choices, cli_jar, bundle_paths, tried)
+
+    selected_version = selected.version
 
     if not Path(patched_apk).exists():
         return None

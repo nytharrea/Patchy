@@ -207,7 +207,13 @@ def _describe_accepted_codes(codes: Collection[int]) -> str:
     return ", ".join(str(code) for code in sorted(codes))
 
 
-def _log_pick(pick: Pick, arch: str, force_build: str | None, build_codes: Mapping[str, int] | None) -> None:
+def _log_pick(
+    pick: Pick,
+    arch: str,
+    force_build: str | None,
+    build_codes: Mapping[str, int] | None,
+    file_type: str | None = None,
+) -> None:
     detail = pick.variant.describe(pick.matched_code)
     declared = _describe_declared_codes(build_codes) if build_codes else ""
 
@@ -232,6 +238,12 @@ def _log_pick(pick: Pick, arch: str, force_build: str | None, build_codes: Mappi
                 f"bundle declares ({declared}), so the default pick is used and may not be patchable."
             )
 
+    if file_type is not None and not pick.file_type_matched:
+        found = "a bundle" if pick.variant.is_bundle else "a plain APK"
+        log.warn(
+            f'apk_type is "{file_type}", but the build picked on APKMirror is {found}, so the patch may reject it.'
+        )
+
 
 async def download_apk(
     version: str,
@@ -242,6 +254,7 @@ async def download_apk(
     arch: str = DEFAULT_ARCH,
     build_codes: Mapping[str, int] | None = None,
     accepted_codes: Collection[int] | None = None,
+    file_type: str | None = None,
 ) -> str:
     out_dir = paths.downloads_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -275,7 +288,13 @@ async def download_apk(
             tree = parse(cleared.html)
             pick = (
                 select_variant(
-                    tree, force_build, app_slug, arch=arch, build_codes=build_codes, accepted_codes=accepted_codes
+                    tree,
+                    force_build,
+                    app_slug,
+                    arch=arch,
+                    build_codes=build_codes,
+                    accepted_codes=accepted_codes,
+                    file_type=file_type,
                 )
                 if tree is not None
                 else None
@@ -299,7 +318,7 @@ async def download_apk(
                 f"code the patch accepts ({_describe_accepted_codes(accepted_codes)})."
             )
         log.info(f"VARIANT: {variant_url}")
-        _log_pick(pick, arch, force_build, build_codes)
+        _log_pick(pick, arch, force_build, build_codes, file_type)
         if build_codes and pick.basis == "default" and not force_build:
             dump_variant_rows_for_debug(tree)
             await _save_diagnostic_html(cleared.html, f"no-declared-build-{app_slug}")

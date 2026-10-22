@@ -63,6 +63,7 @@ class Pick:
     matched_code: int | None
     listed: int
     eligible: int
+    file_type_matched: bool = True
 
 
 def parse(html: str) -> lxml.html.HtmlElement | None:
@@ -203,6 +204,10 @@ def _default_slot(variant: Variant) -> int:
     return slot + 3 if variant.is_bundle else slot
 
 
+def _file_type_fits(variant: Variant, file_type: str | None) -> bool:
+    return file_type is None or variant.is_bundle == (file_type == "bundle")
+
+
 def _match_declared_build(
     variant: Variant,
     target_code: int | None,
@@ -228,6 +233,7 @@ def select_variant(
     arch: str = DEFAULT_ARCH,
     build_codes: Mapping[str, int] | None = None,
     accepted_codes: Collection[int] | None = None,
+    file_type: str | None = None,
 ) -> Pick | None:
     variants = parse_variants(tree)
     target_key = arch_key(arch)
@@ -237,7 +243,7 @@ def select_variant(
     accepted = frozenset(accepted_codes or ())
     pin = str(force_build) if force_build else ""
 
-    best: tuple[tuple[int, int, int], Variant, int | None] | None = None
+    best: tuple[tuple[int, int, int, int], Variant, int | None] | None = None
     eligible = 0
 
     for index, variant in enumerate(variants):
@@ -250,20 +256,21 @@ def select_variant(
 
         eligible += 1
         tier, matched = _match_declared_build(variant, target_code, declared_codes, accepted)
-        rank = (tier, _default_slot(variant), index)
+        rank = (tier, 0 if _file_type_fits(variant, file_type) else 1, _default_slot(variant), index)
         if best is None or rank < best[0]:
             best = (rank, variant, matched)
 
     if best is None:
         return None
 
-    (tier, _, _), variant, matched = best
+    (tier, _, _, _), variant, matched = best
     return Pick(
         variant=variant,
         basis=_BASIS_BY_TIER[tier],
         matched_code=matched,
         listed=len(variants),
         eligible=eligible,
+        file_type_matched=_file_type_fits(variant, file_type),
     )
 
 

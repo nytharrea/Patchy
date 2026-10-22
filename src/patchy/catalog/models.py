@@ -18,6 +18,8 @@ class GithubAppSource(TypedDict):
 
 ApkSource = ApkMirrorSource | GithubAppSource
 
+ApkType = Literal["apk", "bundle"]
+
 
 class CliSource(TypedDict):
     owner: str
@@ -39,6 +41,7 @@ class BuildConfig(TypedDict):
     arch: str
     icon: str
     apk_source: ApkSource
+    apk_type: ApkType | None
     bundles: list[str]
     exclude: list[str]
     enable: list[str]

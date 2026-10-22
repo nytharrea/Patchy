@@ -1,6 +1,11 @@
+from typing import get_args
+
 from ..core.settings import settings
 from ..engine.label import MAX_LABEL_LENGTH
 from . import BUILDS, BUNDLES, COMPANIONS
+from .models import ApkType
+
+APK_TYPES = get_args(ApkType)
 
 
 class ConfigError(Exception):
@@ -56,6 +61,19 @@ def validate_catalog() -> None:
         for field in required_fields:
             if not source.get(field):
                 problems.append(f'Build "{key}".apk_source is type "{source.get("type")}" but has no "{field}".')
+
+        apk_type = build.get("apk_type")
+        if apk_type is not None:
+            if apk_type not in APK_TYPES:
+                problems.append(
+                    f'Build "{key}".apk_type should be "apk" or "bundle", got {apk_type!r} '
+                    f"(see the APK type section of docs/configuration.md)."
+                )
+            elif source.get("type") != "apkmirror":
+                problems.append(
+                    f'Build "{key}".apk_type only applies to APKMirror sources, but its apk_source is type '
+                    f'"{source.get("type")}", where it would be ignored.'
+                )
 
     for key, companion in COMPANIONS.items():
         for build_key in companion["for_builds"]:

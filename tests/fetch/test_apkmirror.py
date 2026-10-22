@@ -619,7 +619,7 @@ FACEBOOK_SITE = {"org": "facebook-2", "slug": "facebook"}
 FACEBOOK_LIST_URL = f"https://www.apkmirror.com{FACEBOOK_RELEASE}"
 
 
-async def _download_facebook(monkeypatch, tmp_path, **kwargs):
+async def _download_facebook(monkeypatch, tmp_path, page=None, **kwargs):
     fetched = []
     warnings = []
 
@@ -628,7 +628,8 @@ async def _download_facebook(monkeypatch, tmp_path, **kwargs):
 
     async def fake_fetch(url, label, **fetch_kwargs):
         fetched.append((label, url))
-        html = _facebook_html() if label == "list-page" else "<html><body>variant page</body></html>"
+        list_page = _facebook_html() if page is None else page
+        html = list_page if label == "list-page" else "<html><body>variant page</body></html>"
         return Cleared(url=url, status=200, html=html, user_agent="", cookies=[])
 
     async def fake_resolve_download_url(variant_url, variant_cleared):
@@ -699,6 +700,41 @@ async def test_download_apk_force_build_still_overrides_the_declared_build(monke
     assert len(warnings) == 1
     assert "force_build" in warnings[0]
     assert not (tmp_path / "diagnostics").exists()
+
+
+async def test_download_apk_opens_the_bundle_page_when_the_build_asks_for_a_bundle(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(
+        monkeypatch, tmp_path, _plain_and_bundle_html(), file_type="bundle"
+    )
+
+    assert _variant_page_fetched(fetched) == ["https://www.apkmirror.com/bundle"]
+    assert warnings == []
+
+
+async def test_download_apk_opens_the_plain_apk_page_when_the_build_does_not_ask_for_a_type(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(monkeypatch, tmp_path, _plain_and_bundle_html())
+
+    assert _variant_page_fetched(fetched) == ["https://www.apkmirror.com/plain"]
+    assert warnings == []
+
+
+async def test_download_apk_warns_when_the_picked_build_is_not_of_the_asked_type(monkeypatch, tmp_path):
+    fetched, warnings = await _download_facebook(
+        monkeypatch, tmp_path, build_codes=HUSHFACEBOOK_CODES, file_type="apk"
+    )
+
+    assert _variant_page_fetched(fetched) == [f"https://www.apkmirror.com{_facebook_variant_href('13')}"]
+    assert len(warnings) == 1
+    assert 'apk_type is "apk"' in warnings[0]
+    assert "a bundle" in warnings[0]
+
+
+async def test_download_apk_does_not_warn_when_the_picked_build_is_of_the_asked_type(monkeypatch, tmp_path):
+    _, warnings = await _download_facebook(
+        monkeypatch, tmp_path, build_codes=HUSHFACEBOOK_CODES, file_type="bundle"
+    )
+
+    assert warnings == []
 
 
 DISCORD_SITE = {"org": "discord", "slug": "discord-chat-for-gamers", "release_slug": "discord-talk-play-hang-out"}
@@ -916,6 +952,135 @@ def test_select_variant_treats_empty_accepted_codes_like_none():
     assert select_variant(parse(html), None, "messenger", accepted_codes=[]) == select_variant(
         parse(html), None, "messenger"
     )
+
+
+def _plain_and_bundle_html(*, plain_code=5001, bundle_code=5001, plain_dpi="nodpi", bundle_dpi="nodpi"):
+    return f"""<html><body><div class="variants-table">
+        {_split(plain_code, "arm64-v8a", plain_dpi, "/plain", badge="APK")}
+        {_split(bundle_code, "arm64-v8a", bundle_dpi, "/bundle", badge="BUNDLE")}
+    </div></body></html>"""
+
+
+def test_select_variant_prefers_a_plain_apk_over_a_bundle_when_the_build_does_not_say():
+    pick = select_variant(parse(_plain_and_bundle_html()), None, "proton-vpn")
+
+    assert pick is not None
+    assert pick.variant.href == "/plain"
+    assert pick.file_type_matched is True
+
+
+def test_select_variant_takes_the_bundle_when_the_build_asks_for_a_bundle():
+    pick = select_variant(parse(_plain_and_bundle_html()), None, "proton-vpn", file_type="bundle")
+
+    assert pick is not None
+    assert pick.variant.href == "/bundle"
+    assert pick.file_type_matched is True
+
+
+def test_select_variant_takes_the_plain_apk_when_the_build_asks_for_a_plain_apk():
+    html = f"""<html><body><div class="variants-table">
+        {_split(5001, "arm64-v8a", "nodpi", "/bundle", badge="BUNDLE")}
+        {_split(5001, "arm64-v8a", "nodpi", "/plain", badge="APK")}
+    </div></body></html>"""
+
+    pick = select_variant(parse(html), None, "foo", file_type="apk")
+
+    assert pick is not None
+    assert pick.variant.href == "/plain"
+    assert pick.file_type_matched is True
+
+
+def test_select_variant_takes_the_bundle_over_a_better_dpi_slot_when_the_build_asks_for_a_bundle():
+    html = _plain_and_bundle_html(bundle_dpi="240-640dpi")
+
+    pick = select_variant(parse(html), None, "proton-vpn", file_type="bundle")
+
+    assert pick is not None
+    assert pick.variant.href == "/bundle"
+
+
+def test_select_variant_keeps_the_dpi_order_among_the_rows_of_the_asked_type():
+    html = f"""<html><body><div class="variants-table">
+        {_split(5001, "arm64-v8a", "240-640dpi", "/bundle-dpi", badge="BUNDLE")}
+        {_split(5001, "arm64-v8a", "nodpi", "/bundle-nodpi", badge="BUNDLE")}
+        {_split(5001, "arm64-v8a", "nodpi", "/plain", badge="APK")}
+    </div></body></html>"""
+
+    pick = select_variant(parse(html), None, "proton-vpn", file_type="bundle")
+
+    assert pick is not None
+    assert pick.variant.href == "/bundle-nodpi"
+
+
+def test_select_variant_lets_the_build_code_decide_before_the_asked_type():
+    html = _plain_and_bundle_html(plain_code=6002, bundle_code=5001)
+
+    pick = select_variant(parse(html), None, "foo", build_codes={"ARM64_V8A": 6002}, file_type="bundle")
+
+    assert pick is not None
+    assert pick.variant.href == "/plain"
+    assert pick.basis == "target-build"
+    assert pick.file_type_matched is False
+
+
+def test_select_variant_takes_the_bundle_that_has_the_build_code_the_patch_declares():
+    html = f"""<html><body><div class="variants-table">
+        {_split(5001, "arm64-v8a", "nodpi", "/bundle-old", badge="BUNDLE")}
+        {_split(5002, "arm64-v8a", "nodpi", "/bundle-new", badge="BUNDLE")}
+        {_split(5002, "arm64-v8a", "nodpi", "/plain-new", badge="APK")}
+    </div></body></html>"""
+
+    pick = select_variant(parse(html), None, "foo", build_codes={"ARM64_V8A": 5002}, file_type="bundle")
+
+    assert pick is not None
+    assert pick.variant.href == "/bundle-new"
+    assert pick.basis == "target-build"
+    assert pick.file_type_matched is True
+
+
+def test_select_variant_keeps_the_asked_type_among_the_builds_the_patch_accepts():
+    pick = select_variant(parse(_plain_and_bundle_html()), None, "foo", accepted_codes={5001}, file_type="bundle")
+
+    assert pick is not None
+    assert pick.variant.href == "/bundle"
+    assert pick.basis == "accepted-build"
+
+
+def test_select_variant_says_when_no_listed_build_is_of_the_asked_type():
+    html = f"""<html><body><div class="variants-table">
+        {_split(5001, "arm64-v8a", "nodpi", "/plain-only", badge="APK")}
+    </div></body></html>"""
+
+    pick = select_variant(parse(html), None, "proton-vpn", file_type="bundle")
+
+    assert pick is not None
+    assert pick.variant.href == "/plain-only"
+    assert pick.file_type_matched is False
+
+
+def test_select_variant_still_applies_the_arch_and_the_force_build_pin_with_an_asked_type():
+    html = f"""<html><body><div class="variants-table">
+        {_split(5001, "x86", "nodpi", "/bundle-x86", badge="BUNDLE")}
+        {_split(5001, "arm64-v8a", "240-640dpi", "/bundle-240", badge="BUNDLE")}
+        {_split(5001, "arm64-v8a", "480dpi", "/bundle-480", badge="BUNDLE")}
+        {_split(5001, "arm64-v8a", "nodpi", "/plain", badge="APK")}
+    </div></body></html>"""
+
+    assert select_variant(parse(html), None, "foo", file_type="bundle").variant.href == "/bundle-240"
+    assert select_variant(parse(html), "480dpi", "foo", file_type="bundle").variant.href == "/bundle-480"
+
+
+def test_select_variant_never_picks_a_non_bundle_row_for_instagram_whatever_the_asked_type():
+    html = f"""<html><body><div class="variants-table">
+        {_split(5001, "arm64-v8a", "nodpi", "/plain", badge="APK")}
+        {_split(5001, "arm64-v8a", "nodpi", "/bundle", badge="BUNDLE")}
+    </div></body></html>"""
+
+    pick = select_variant(parse(html), None, "instagram", file_type="apk")
+
+    assert pick is not None
+    assert pick.variant.href == "/bundle"
+    assert pick.file_type_matched is False
 
 
 async def test_download_apk_opens_the_variant_page_of_a_build_the_patch_accepts(monkeypatch, tmp_path):

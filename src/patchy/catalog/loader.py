@@ -136,6 +136,7 @@ def load_builds() -> dict[str, BuildConfig]:
                     "arch": app["arch"],
                     "icon": app["icon"],
                     "apk_source": apk_source,
+                    "apk_type": build.get("apk_type", app.get("apk_type")),
                     "bundles": list(build["bundles"]),
                     "exclude": list(build.get("exclude") or []),
                     "enable": list(build.get("enable") or []),

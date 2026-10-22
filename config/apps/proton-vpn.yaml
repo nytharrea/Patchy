@@ -9,4 +9,5 @@ apk_source:
   release_slug: "proton-vpn-fast-secure-vpn"
 builds:
   - key: "proton-vpn"
+    apk_type: "bundle"
     bundles: ["hxreborn"]
