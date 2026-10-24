@@ -26,6 +26,10 @@ class PatchFailed(RuntimeError):
     pass
 
 
+class NoCompatiblePatches(PatchFailed):
+    pass
+
+
 class UnsupportedBuild(PatchFailed):
     def __init__(self, message: str, rejected: int, accepted: frozenset[int]) -> None:
         super().__init__(message)
@@ -136,7 +140,7 @@ async def patch_apk(
     output = "".join(lines)
 
     if "Applying 0 patches" in output:
-        raise PatchFailed("Applying 0 patches. No compatible patch found or version not supported.")
+        raise NoCompatiblePatches("Applying 0 patches. No compatible patch found or version not supported.")
 
     if process.returncode != 0:
         message = f"Patch failed (exit {process.returncode}):\n{output}"

@@ -36,8 +36,9 @@ src/patchy/
 │  ├─ github.py        GitHub release downloads and GitHub-hosted apps
 │  └─ bundles.py       patcher CLI, patch bundles, companions, bundles.json manifest
 ├─ engine/
-│  ├─ build.py         one build: version, download, verify, patch, app name repair, status file with stage timings
+│  ├─ build.py         one build: version, download, verify, patch (with a second attempt for bundles built for different Patcher versions), app name repair, status file with stage timings
 │  ├─ patcher.py       async patcher CLI wrapper with a per-line watchdog
+│  ├─ bundle_compat.py reads the Morphe Patcher version a patch bundle was built for and picks the bundles that can run together
 │  ├─ label.py         repairs or sets the app name (`android:label`) in the binary manifest of a patched APK
 │  ├─ verify.py        apksigner-based certificate check against the pins
 │  ├─ pins.py          reading, promoting and committing pins

@@ -50,11 +50,20 @@ Not an error by itself. The bundle supports the newest version only as an experi
 
 ## `Failed to match the fingerprint`
 
-A patch found nothing to change in the APK it was given, and the whole patching stopped. There are three usual reasons, and the log tells which one applies:
+A patch found nothing to change in the APK it was given, and the whole patching stopped. There are four usual reasons, and the log tells which one applies:
 
+- The bundles of the build were built for different versions of Morphe Patcher, and the patcher applied the rules of the newest one to all of them. The output then has the line `Patches built for an older version of Morphe Patcher are applied with the behavior of Morphe Patcher 2.0.0 ...`. Patchy patches again by itself, see the next entry.
 - The version is experimental: Patchy then falls back to a stable version by itself, see the entry above.
 - The file is another compilation of the same release than the one the patch is written for, for example a plain APK where the bundle expects a split bundle (`.apkm`). The `VARIANT:` line shows `apk` or `bundle` for the chosen row. Set `apk_type` for the build, see the entry below.
 - The app moved on and the bundle has not followed yet. Wait for a newer bundle release, or pin the version the bundle supports with `force_version`.
+
+## `Patching failed while patch bundles built for different versions of Morphe Patcher were used together`
+
+The patcher follows the newest bundle of a build: when one of them is built for Morphe Patcher 2.0.0 or later (the `morphe` bundle that adds `Disable Play Store updates` to the TikTok builds, for example), the fingerprints of every other bundle are matched by the new, stricter rules, and a bundle built for an older version can fail on an app it patches fine on its own. The first attempt, made with all bundles, failed, so Patchy read the version each bundle declares and patched the same APK a second time without the bundles built for the newer one. The line names every bundle with its version and the ones that were left out.
+
+When the second attempt succeeds, the APK is published without the patches that only the left-out bundle provides, which for the TikTok builds is `Disable Play Store updates`. Nothing needs to be changed: once the bundle of the app is rebuilt for Morphe Patcher 2.0.0, the first attempt works again and the patch comes back. When the second attempt fails as well, the error below it is the real reason, usually one of the others in the entry above, and the build fails with it.
+
+No second attempt is made, and the first failure stands, when all bundles were built for the same side of Morphe Patcher 2.0.0, when a bundle does not declare its version (the manifest of the `.mpp` file has no `Patcher-Version` line), or when the build has a single bundle. See [Bundles built for different versions of Morphe Patcher](configuration.md#bundles-built-for-different-versions-of-morphe-patcher).
 
 ## `apk_type is "bundle", but the build picked on APKMirror is a plain APK`
 

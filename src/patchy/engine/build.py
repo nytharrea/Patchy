@@ -12,8 +12,9 @@ from ..catalog.models import ApkMirrorSource, ApkSource, BuildConfig
 from ..core import log, paths
 from ..fetch import apkmirror, github
 from ..fetch.bundles import Tools
+from .bundle_compat import format_patcher_version, split_by_generation
 from .label import fix_apk_label
-from .patcher import PatchFailed, UnsupportedBuild, list_versions, patch_apk
+from .patcher import NoCompatiblePatches, PatchFailed, UnsupportedBuild, list_versions, patch_apk
 from .verify import UnpinnedSignature, verify_apk_signature
 from .versions import extract_cli_version_codes, extract_cli_versions, file_name_version, rank_versions
 
@@ -191,6 +192,49 @@ def _fix_app_label(apk: Path, label: str | None, fallback: str) -> None:
         log.success(f"App name of <{change.element}> changed from {change.before!r} to {change.after!r}")
 
 
+def _bundle_labels(build: BuildConfig, bundle_paths: Sequence[str | Path]) -> list[str]:
+    keys = build["bundles"]
+    if len(keys) == len(bundle_paths):
+        return list(keys)
+    return [Path(path).name for path in bundle_paths]
+
+
+async def _patch(
+    build: BuildConfig, cli_jar: str | Path, bundle_paths: Sequence[str | Path], apk_path: str
+) -> str:
+    async def run(bundles: Sequence[str | Path]) -> str:
+        return await patch_apk(
+            cli_jar,
+            bundles,
+            apk_path,
+            exclude=build.get("exclude"),
+            enable=build.get("enable"),
+            options=build.get("options"),
+            arch=build["arch"],
+        )
+
+    try:
+        return await run(bundle_paths)
+    except (UnsupportedBuild, NoCompatiblePatches):
+        raise
+    except PatchFailed:
+        split = split_by_generation(bundle_paths)
+        if split is None:
+            raise
+        labels = _bundle_labels(build, bundle_paths)
+        built_for = ", ".join(
+            f"{label} {format_patcher_version(version)}"
+            for label, version in zip(labels, split.versions, strict=True)
+        )
+        left_out = ", ".join(labels[index] for index in split.dropped)
+        log.warn(
+            f"Patching failed while patch bundles built for different versions of Morphe Patcher were used together "
+            f"({built_for}), and the patcher applies the behavior of the newest version to all of them. "
+            f"Trying once more without {left_out}, so the patches that only it provides are not applied to this build."
+        )
+        return await run([bundle_paths[index] for index in split.kept])
+
+
 async def _build_one(
     build: BuildConfig,
     source: ApkSource,
@@ -215,15 +259,7 @@ async def _build_one(
         await verify_apk_signature(apk_path, app_slug)
 
     async def patch(path: str) -> str:
-        return await patch_apk(
-            cli_jar,
-            bundle_paths,
-            path,
-            exclude=build.get("exclude"),
-            enable=build.get("enable"),
-            options=build.get("options"),
-            arch=build["arch"],
-        )
+        return await _patch(build, cli_jar, bundle_paths, path)
 
     try:
         with log.timed("patch"):

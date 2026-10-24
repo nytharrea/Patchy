@@ -61,7 +61,7 @@ For `github`, `tag_template` turns the version the patch bundle supports into th
 | Field | Required | Meaning |
 |---|---|---|
 | `key` | yes | Unique across all files. It is the CI matrix entry and appears in release file names |
-| `bundles` | yes | One or more keys from `config/bundles.yaml` |
+| `bundles` | yes | One or more keys from `config/bundles.yaml`. List the bundle that carries the patches of the app first, see [Bundles built for different versions of Morphe Patcher](#bundles-built-for-different-versions-of-morphe-patcher) |
 | `display_name` | no | Overrides the app's name for this build |
 | `label` | no | Overrides the app's `label` for this build; `label: null` removes it |
 | `apk_type` | no | Overrides the app's `apk_type` for this build; `apk_type: null` removes it. Only valid for `apkmirror` sources |
@@ -128,6 +128,14 @@ bundles:
 `cli` is the patcher jar. Each entry under `bundles` is a repository whose newest release (prereleases included) ships a `.mpp` patch bundle. `label` appears in the release notes.
 
 Every bundle is stored in its own folder, `build/tools/bundles/<key>/`, so two repositories that publish a file with the same name (a fork that mirrors upstream's version number, for example `patches-1.47.0.mpp`) never overwrite each other.
+
+### Bundles built for different versions of Morphe Patcher
+
+A patch bundle declares the version of Morphe Patcher it was built for in its manifest (`Patcher-Version`). A build with several bundles gives all of them to one run of the patcher, and the patcher follows the newest one. From Morphe Patcher 2.0.0 on, the strings of a fingerprint must equal a string of the method instead of only being contained in one, and the instruction filters of a fingerprint are retried differently. A bundle built for an older version is applied with these rules too, so a patch that finds its code when its bundle runs alone can stop finding it. The patcher warns about this in its output (`Patches built for an older version of Morphe Patcher are applied with the behavior of Morphe Patcher 2.0.0 ... and may not work as intended`), and the patching usually ends with `Failed to match the fingerprint` or `expected one candidate, found 0`.
+
+Nothing has to be configured for this. A build is patched with all of its bundles first, which keeps every patch a helper bundle adds, such as `Disable Play Store updates` from `morphe`. When that fails, Patchy reads the `Patcher-Version` of the bundle files. If they were built for both sides of Morphe Patcher 2.0.0, it patches the same APK once more, without downloading anything again, with only the bundles built for the same side as the first bundle of the build. `enable`, `exclude` and `options` are passed again as they were, and the patcher ignores an `enable` name that none of the remaining bundles has. The log says `Patching failed while patch bundles built for different versions of Morphe Patcher were used together (...)` and names the bundles that were left out, and the run page shows it as a warning. The patches that only those bundles provide are missing from that APK. For the TikTok builds, which add `morphe` only for `Disable Play Store updates`, that is the one patch.
+
+The second attempt is not made when all bundles were built for the same side of 2.0.0, when a bundle declares no version or cannot be read, for a build with a single bundle, when the patcher rejected the build code of the APK (Patchy then fetches another build, see [How the APKMirror variant is chosen](#how-the-apkmirror-variant-is-chosen)) and when no patch fitted the version (`Applying 0 patches`). The first bundle of a build is never left out, so list the bundle that carries the patches of the app first and the helper bundles after it. As soon as the bundle of the app is rebuilt for Morphe Patcher 2.0.0, the first attempt succeeds again on its own. If the second attempt fails too, the build fails with its error.
 
 ## `config/companions.yaml`
 

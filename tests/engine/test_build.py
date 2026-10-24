@@ -11,6 +11,7 @@ from patchy.fetch import apkmirror, github
 from patchy.fetch.bundles import Tools
 
 from .axml import apk_labels, build_apk, build_manifest, reference_label, text_label
+from .bundles import write_bundle
 
 FINGERPRINT = "3d7a1223019aa39d9ea0e3436ab7c0896bfb4fb679f4de5fe7c23f326c8f994a"
 
@@ -1128,6 +1129,310 @@ async def test_process_build_keeps_the_apk_type_when_it_asks_for_another_build(m
     await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
     assert [download["file_type"] for download in downloads] == ["bundle", "bundle"]
+
+
+def _mixed_bundles(tmp_path):
+    return [
+        write_bundle(tmp_path, "legacy.mpp", "1.5.1"),
+        write_bundle(tmp_path, "current.mpp", "2.0.0"),
+    ]
+
+
+def _recorded_patches(monkeypatch, tmp_path, outcomes):
+    calls = []
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        calls.append({"bundles": list(bundles), "apk": apk, **kwargs})
+        outcome = outcomes[len(calls) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+    return calls
+
+
+def _github_downloads(monkeypatch, tmp_path):
+    downloads = []
+
+    async def fake_download(version, app_slug, source):
+        downloads.append(version)
+        return str(tmp_path / "downloaded.apk")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+    return downloads
+
+
+GITHUB_SOURCE = {"type": "github", "owner": "acme-inc", "repo": "acme-app"}
+
+
+async def test_process_build_patches_again_without_the_bundle_built_for_a_newer_patcher(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    catalog.BUILDS[build_key].update(
+        bundles=["legacy-bundle", "current-bundle"],
+        exclude=["Unwanted"],
+        enable=["Disable Play Store updates"],
+        options={"Some patch.key": "value"},
+    )
+    legacy, current = _mixed_bundles(tmp_path)
+    downloads = _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("Patch failed (exit 1)"), None])
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    result = await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    assert result is not None
+    assert result["name"] == "The App-1.2.3.apk"
+    assert downloads == ["1.2.3"]
+    assert [call["bundles"] for call in calls] == [[legacy, current], [legacy]]
+    assert len({call["apk"] for call in calls}) == 1
+    first, second = calls
+    for key in ("exclude", "enable", "options", "arch"):
+        assert first[key] == second[key]
+    assert second["enable"] == ["Disable Play Store updates"]
+    assert second["exclude"] == ["Unwanted"]
+    assert second["options"] == {"Some patch.key": "value"}
+    assert second["arch"] == "arm64-v8a"
+
+
+async def test_process_build_names_the_bundles_and_their_patcher_versions_when_it_patches_again(
+    monkeypatch, tmp_path
+):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    catalog.BUILDS[build_key]["bundles"] = ["legacy-bundle", "current-bundle"]
+    legacy, current = _mixed_bundles(tmp_path)
+    _github_downloads(monkeypatch, tmp_path)
+    _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("Patch failed (exit 1)"), None])
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    retries = [line for line in warnings if "Morphe Patcher" in line]
+    assert len(retries) == 1
+    assert "legacy-bundle 1.5.1" in retries[0]
+    assert "current-bundle 2.0.0" in retries[0]
+    assert "Trying once more without current-bundle" in retries[0]
+
+
+async def test_process_build_names_the_bundle_files_when_the_build_lists_other_bundles(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    legacy, current = _mixed_bundles(tmp_path)
+    _github_downloads(monkeypatch, tmp_path)
+    _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("Patch failed (exit 1)"), None])
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    retry = next(line for line in warnings if "Morphe Patcher" in line)
+    assert "legacy.mpp 1.5.1" in retry
+    assert "current.mpp 2.0.0" in retry
+    assert "without current.mpp" in retry
+
+
+async def test_process_build_patches_once_when_the_mixed_bundles_work_together(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    legacy, current = _mixed_bundles(tmp_path)
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [None])
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    result = await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    assert result is not None
+    assert [call["bundles"] for call in calls] == [[legacy, current]]
+    assert not any("Morphe Patcher" in line for line in warnings)
+
+
+async def test_process_build_reports_the_failure_of_the_second_patching(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    legacy, current = _mixed_bundles(tmp_path)
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(
+        monkeypatch, tmp_path, [build.PatchFailed("first failure"), build.PatchFailed("second failure")]
+    )
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    with pytest.raises(build.PatchFailed, match="second failure"):
+        await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    assert len(calls) == 2
+
+
+async def test_process_build_patches_again_only_once(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    first = write_bundle(tmp_path, "first.mpp", "1.5.1")
+    second = write_bundle(tmp_path, "second.mpp", "2.0.0")
+    third = write_bundle(tmp_path, "third.mpp", "2.1.0")
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("a")] * 5)
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    with pytest.raises(build.PatchFailed):
+        await build.process_build(build_key, "desktop.jar", [first, second, third])
+
+    assert [call["bundles"] for call in calls] == [[first, second, third], [first]]
+
+
+async def test_process_build_keeps_the_bundles_of_the_same_patcher_version_as_the_first_one(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    first = write_bundle(tmp_path, "first.mpp", "1.5.1")
+    newer = write_bundle(tmp_path, "newer.mpp", "2.0.0")
+    last = write_bundle(tmp_path, "last.mpp", "1.8.0")
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("a"), None])
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    await build.process_build(build_key, "desktop.jar", [first, newer, last])
+
+    assert [call["bundles"] for call in calls] == [[first, newer, last], [first, last]]
+
+
+async def test_process_build_does_not_patch_again_when_the_bundles_share_a_patcher_generation(
+    monkeypatch, tmp_path
+):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    older = write_bundle(tmp_path, "older.mpp", "1.5.1")
+    newer = write_bundle(tmp_path, "newer.mpp", "1.8.0")
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("only failure")])
+
+    with pytest.raises(build.PatchFailed, match="only failure"):
+        await build.process_build(build_key, "desktop.jar", [older, newer])
+
+    assert len(calls) == 1
+
+
+async def test_process_build_does_not_patch_again_when_a_bundle_declares_no_patcher_version(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    legacy = write_bundle(tmp_path, "legacy.mpp", "1.5.1")
+    undeclared = write_bundle(tmp_path, "undeclared.mpp", None)
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("only failure")])
+
+    with pytest.raises(build.PatchFailed, match="only failure"):
+        await build.process_build(build_key, "desktop.jar", [legacy, undeclared])
+
+    assert len(calls) == 1
+
+
+async def test_process_build_does_not_patch_again_with_a_single_bundle(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    only = write_bundle(tmp_path, "only.mpp", "2.0.0")
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("only failure")])
+
+    with pytest.raises(build.PatchFailed, match="only failure"):
+        await build.process_build(build_key, "desktop.jar", [only])
+
+    assert len(calls) == 1
+
+
+async def test_process_build_does_not_patch_again_when_no_patch_was_compatible(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    legacy, current = _mixed_bundles(tmp_path)
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [build.NoCompatiblePatches("Applying 0 patches.")])
+
+    with pytest.raises(build.NoCompatiblePatches):
+        await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    assert len(calls) == 1
+
+
+async def test_process_build_does_not_patch_again_after_a_failure_that_is_not_a_patch_failure(
+    monkeypatch, tmp_path
+):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    legacy, current = _mixed_bundles(tmp_path)
+    _github_downloads(monkeypatch, tmp_path)
+    calls = _recorded_patches(monkeypatch, tmp_path, [RuntimeError("boom")])
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    assert len(calls) == 1
+
+
+async def test_process_build_fetches_the_accepted_build_before_it_leaves_a_bundle_out(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    _numbered_apkmirror_downloads(monkeypatch, tmp_path)
+    legacy, current = _mixed_bundles(tmp_path)
+    calls = _recorded_patches(
+        monkeypatch,
+        tmp_path,
+        [build.UnsupportedBuild("Patch failed (exit 1)", 990, frozenset({880})), None],
+    )
+
+    await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    assert [(Path(call["apk"]).name, call["bundles"]) for call in calls] == [
+        ("downloaded-1.apk", [legacy, current]),
+        ("downloaded-2.apk", [legacy, current]),
+    ]
+
+
+async def test_process_build_leaves_a_bundle_out_for_the_build_it_fetched_after_a_rejection(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    _list_versions_returns(monkeypatch, NO_BUILD_CODES)
+    downloads = _numbered_apkmirror_downloads(monkeypatch, tmp_path)
+    legacy, current = _mixed_bundles(tmp_path)
+    calls = _recorded_patches(
+        monkeypatch,
+        tmp_path,
+        [
+            build.UnsupportedBuild("Patch failed (exit 1)", 990, frozenset({880})),
+            build.PatchFailed("Patch failed (exit 1)"),
+            None,
+        ],
+    )
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    result = await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    assert result is not None
+    assert len(downloads) == 2
+    assert [(Path(call["apk"]).name, call["bundles"]) for call in calls] == [
+        ("downloaded-1.apk", [legacy, current]),
+        ("downloaded-2.apk", [legacy, current]),
+        ("downloaded-2.apk", [legacy]),
+    ]
+
+
+async def test_process_build_does_not_look_for_another_version_when_patching_again_works(monkeypatch, tmp_path):
+    apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+    build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
+    modes = _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    legacy, current = _mixed_bundles(tmp_path)
+    _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("Patch failed (exit 1)"), None])
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+
+    result = await build.process_build(build_key, "desktop.jar", [legacy, current])
+
+    assert result["version"] == "9.9.9"
+    assert [download["version"] for download in downloads] == ["9.9.9"]
+    assert modes == [True]
+
+
+async def test_run_builds_records_a_build_that_needed_another_patching_as_a_success(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB_SOURCE)
+    legacy, current = _mixed_bundles(tmp_path)
+    _github_downloads(monkeypatch, tmp_path)
+    _recorded_patches(monkeypatch, tmp_path, [build.PatchFailed("Patch failed (exit 1)"), None])
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
+    monkeypatch.setattr(build, "_bundle_paths", lambda key, tools: [legacy, current])
+
+    failed = await build.run_builds([build_key], _tools(tmp_path))
+
+    assert failed == []
+    assert _status(tmp_path, build_key)["ok"] is True
+    assert _status(tmp_path, build_key)["version"] == "1.2.3"
 
 
 def _status(tmp_path, build_key):

@@ -234,6 +234,22 @@ async def test_a_run_that_applies_no_patch_is_a_patch_failure(monkeypatch, tmp_p
         await patcher.patch_apk("desktop.jar", [], "input.apk")
 
 
+async def test_a_run_that_applies_no_patch_is_told_apart_from_other_patch_failures(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path, ["Applying 0 patches..."])
+
+    with pytest.raises(patcher.NoCompatiblePatches):
+        await patcher.patch_apk("desktop.jar", [], "input.apk")
+
+
+async def test_a_failing_patch_is_not_reported_as_a_run_without_compatible_patches(monkeypatch, tmp_path):
+    _patch_common(monkeypatch, tmp_path, ["ERROR: FAILED: Some patch"], returncode=1)
+
+    with pytest.raises(patcher.PatchFailed) as caught:
+        await patcher.patch_apk("desktop.jar", ["patch1"], "input.apk")
+
+    assert not isinstance(caught.value, patcher.NoCompatiblePatches)
+
+
 async def test_raises_on_nonzero_exit_code(monkeypatch, tmp_path):
     _patch_common(monkeypatch, tmp_path, ["some error output"], returncode=1)
 
