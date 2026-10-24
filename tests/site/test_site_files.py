@@ -1,0 +1,136 @@
+import re
+import struct
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SITE = ROOT / "site"
+ASSETS = SITE / "assets"
+PAGES = ("index.html", "404.html")
+BRAND_TURQUOISE = "#30d5c8"
+BRAND_RED = "#e30a17"
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _dictionary_keys(source: str, name: str) -> set[str]:
+    start = source.index(f"const {name} = {{")
+    end = source.index("\n};", start)
+    return set(re.findall(r'^ {2}"?([\w.\-]+)"?:', source[start:end], re.MULTILINE))
+
+
+def _policy(page: str) -> dict[str, str]:
+    match = re.search(r'http-equiv="Content-Security-Policy"\s+content="([^"]+)"', _read(SITE / page))
+    assert match, f"{page} has no Content-Security-Policy"
+    directives = {}
+    for part in match.group(1).split(";"):
+        name, _, value = part.strip().partition(" ")
+        if name:
+            directives[name] = value
+    return directives
+
+
+def _png_size(path: Path) -> tuple[int, int]:
+    header = path.read_bytes()[:24]
+    assert header[:8] == b"\x89PNG\r\n\x1a\n"
+    return struct.unpack(">II", header[16:24])
+
+
+def test_local_references_in_pages_resolve_to_files():
+    for page in PAGES:
+        for ref in re.findall(r'\b(?:href|src)="([^"]*)"', _read(SITE / page)):
+            target = ref.replace("__SITE_URL__", "")
+            if not target or target.startswith(("#", "http://", "https://", "data:", "mailto:")):
+                continue
+            relative = target.split("#")[0].split("?")[0].lstrip("/") or "index.html"
+            assert (SITE / relative).is_file(), f"{page} points at missing {ref}"
+
+
+def test_stylesheet_urls_resolve_to_files():
+    for ref in re.findall(r'url\("?([^")]+)"?\)', _read(ASSETS / "style.css")):
+        if ref.startswith(("data:", "#", "http")):
+            continue
+        assert (ASSETS / ref).is_file(), f"style.css points at missing {ref}"
+
+
+def test_module_imports_resolve_to_files():
+    for script in ASSETS.glob("*.js"):
+        source = _read(script)
+        for ref in re.findall(r'(?:from|import\()\s*"(\./[^"]+)"', source):
+            assert (script.parent / ref).is_file(), f"{script.name} imports missing {ref}"
+
+
+def test_pages_only_load_external_scripts():
+    for page in PAGES:
+        for attributes in re.findall(r"<script\b([^>]*)>", _read(SITE / page)):
+            assert "src=" in attributes, f"{page} has an inline script"
+
+
+def test_content_security_policy_forbids_inline_and_eval_scripts():
+    for page in PAGES:
+        policy = _policy(page)
+        scripts = policy.get("script-src", policy.get("default-src", ""))
+        assert "'unsafe-inline'" not in scripts
+        assert "'unsafe-eval'" not in scripts
+
+
+def test_site_url_placeholder_is_replaced_by_the_pages_workflow():
+    workflow = _read(ROOT / ".github" / "workflows" / "pages.yml")
+
+    assert "__SITE_URL__" in workflow
+    for page in PAGES:
+        assert "__SITE_URL__" in _read(SITE / page)
+
+
+def test_dictionaries_cover_the_same_keys():
+    source = _read(ASSETS / "i18n.js")
+
+    assert _dictionary_keys(source, "tr") == _dictionary_keys(source, "en")
+
+
+def test_every_translation_key_in_use_is_defined():
+    known = _dictionary_keys(_read(ASSETS / "i18n.js"), "tr")
+    html = _read(SITE / "index.html")
+    scripts = "\n".join(_read(script) for script in ASSETS.glob("*.js") if script.name != "i18n.js")
+
+    used = set(re.findall(r'data-i18n(?:-html)?="([\w.\-]+)"', html))
+    for value in re.findall(r'data-i18n-attr="([^"]+)"', html):
+        used |= {pair.split(":", 1)[1].strip() for pair in value.split(";") if ":" in pair}
+    used |= set(re.findall(r'\bt\("([\w.\-]+)"', scripts))
+    for key in re.findall(r'\bplural\("([\w.\-]+)"', scripts):
+        used |= {f"{key}.one", f"{key}.other"}
+
+    assert used
+    assert not used - known, f"undefined translation keys: {sorted(used - known)}"
+
+
+def test_vendored_library_ships_with_its_license_and_notice():
+    notices = _read(SITE / "THIRD_PARTY_NOTICES.txt")
+
+    assert (ASSETS / "vendor" / "glassy-liquid.min.js").is_file()
+    assert (ASSETS / "vendor" / "LICENSE-glassy-liquid.txt").is_file()
+    assert "glassy-liquid" in notices
+
+
+def test_palette_is_turquoise_and_turkish_red():
+    stylesheet = _read(ASSETS / "style.css").lower()
+
+    assert f"--turquoise: {BRAND_TURQUOISE}" in stylesheet
+    assert f"--flag-red: {BRAND_RED}" in stylesheet
+    assert BRAND_RED in _read(SITE / "favicon.svg").lower()
+    assert BRAND_TURQUOISE in _read(SITE / "favicon.svg").lower()
+    assert BRAND_RED in _read(SITE / "404.html").lower()
+
+
+def test_share_image_and_touch_icon_have_their_expected_sizes():
+    assert _png_size(ASSETS / "og.png") == (1200, 630)
+    assert _png_size(SITE / "apple-touch-icon.png") == (180, 180)
+
+
+def test_apps_grid_collapses_to_a_single_shrinkable_column_on_phones():
+    stylesheet = _read(ASSETS / "style.css")
+    block = re.search(r"@media \(max-width: 719px\) \{(.*?)\n\}", stylesheet, re.DOTALL)
+
+    assert block, "phone breakpoint is missing"
+    assert "grid-template-columns: minmax(0, 1fr)" in block.group(1)

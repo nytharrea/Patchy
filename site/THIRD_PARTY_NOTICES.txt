@@ -17,3 +17,11 @@ Inter and Inter Display
 App icons
   The icons on the app cards are loaded at run time from the addresses configured in config/apps/*.yaml (Simple Icons CDN).
   They are trademarks of their respective owners and are not hosted by this site.
+
+Design references
+  Reviewed while shaping the glass look and its mobile and Firefox behavior. No code or assets were copied from them.
+  - kube.io, "Liquid Glass in the Browser: Refraction with CSS and SVG" (https://kube.io/blog/liquid-glass-css-svg/)
+  - ruri.design, "Liquid Glass" (https://ruri.design/blog/liquid-glass)
+  - liquidglass.dev and liquidglassdesign.com
+  - iyinchao/liquid-glass-studio, huozhi/vaso, OverShifted/LiquidGlass, yurkagon/react-liquid-glass-svg,
+    shayann07/liquidglass, gentpan/liquidglass, ybouane/liquidglass (GitHub)

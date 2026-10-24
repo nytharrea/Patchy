@@ -15,6 +15,7 @@ import {
   resolveRepo,
   safeHttps,
 } from "./data.js";
+import { initBackdrops, initSeam } from "./backdrop.js";
 import { initLens } from "./hero.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -613,25 +614,40 @@ function initNav() {
   const bar = $("#tabs");
   const ids = ["apps", "process", "verify", "install"];
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-  const visible = new Map();
-  let lock = 0;
-
-  let moved = 0;
+  const hasScrollEnd = "onscrollend" in window;
+  let going = null;
+  let queued = 0;
+  let settle = 0;
 
   const follow = () => {
-    const found = ids.find((id) => visible.get(id));
-    const first = document.getElementById(ids[0]);
-    const current = found || (first && first.getBoundingClientRect().top > 0 ? ids[0] : ids[ids.length - 1]);
+    queued = 0;
+    const probe = window.innerHeight * 0.42;
+    let current = ids[0];
+    for (const id of ids) {
+      const node = document.getElementById(id);
+      if (node && node.getBoundingClientRect().top <= probe) current = id;
+    }
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) current = ids[ids.length - 1];
     if (bar.getAttribute("value") !== current) bar.setAttribute("value", current);
+  };
+
+  const done = () => {
+    clearTimeout(settle);
+    going = null;
+    follow();
+  };
+
+  const wait = (delay) => {
+    clearTimeout(settle);
+    settle = setTimeout(done, delay);
   };
 
   const go = (id) => {
     const target = document.getElementById(id);
-    if (!target || performance.now() - moved < 150) return;
-    moved = performance.now();
-    lock = moved + 1000;
+    if (!target || going === id) return;
+    going = id;
+    wait(hasScrollEnd ? 2600 : 1400);
     target.scrollIntoView({ behavior: reduced.matches ? "auto" : "smooth", block: "start" });
-    setTimeout(follow, 1050);
   };
 
   bar.addEventListener("change", (event) => {
@@ -643,18 +659,22 @@ function initNav() {
     if (tab) go(tab.getAttribute("value"));
   });
 
-  if (typeof IntersectionObserver !== "function") return;
-  const observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) visible.set(entry.target.id, entry.isIntersecting);
-      if (performance.now() >= lock) follow();
-    },
-    { rootMargin: "-40% 0px -55% 0px" },
-  );
-  for (const id of ids) {
-    const node = document.getElementById(id);
-    if (node) observer.observe(node);
+  const onScroll = () => {
+    if (going) {
+      if (!hasScrollEnd) wait(260);
+      return;
+    }
+    if (!queued) queued = requestAnimationFrame(follow);
+  };
+
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll, { passive: true });
+  if (hasScrollEnd) {
+    window.addEventListener("scrollend", () => {
+      if (going) done();
+    });
   }
+  follow();
 }
 
 async function load({ force = false } = {}) {
@@ -682,7 +702,9 @@ async function load({ force = false } = {}) {
 async function loadGlass() {
   try {
     const glass = await import("./vendor/glassy-liquid.min.js");
-    await initLens($(".stage"), glass);
+    const stage = $(".stage");
+    const scenes = initBackdrops(glass, { scene: $("#scene"), stage });
+    await initLens(stage, glass, scenes);
   } catch (error) {
     document.documentElement.classList.add("no-glass");
   }
@@ -690,6 +712,7 @@ async function loadGlass() {
 
 async function boot() {
   applyTranslations();
+  initSeam($(".stage"));
   initTheme();
   initLang();
   initToolbar();
