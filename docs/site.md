@@ -60,7 +60,10 @@ Open `http://localhost:8000`. Outside GitHub Actions the repository comes from `
 | `assets/i18n.js` | Turkish and English strings |
 | `assets/app.js` | Cards, search, sort, filters, details sheet, navigation |
 | `assets/data.js` | Catalog and release loading, asset matching, Obtainium links |
-| `assets/backdrop.js` | Paints the wallpaper and the hero patch to canvases for browsers that cannot refract live content |
+| `assets/backdrop.js` | Picks the glass engine (`data-glass`) and paints the wallpaper and the hero patch to canvases for browsers that cannot refract live content |
+| `assets/glass.js` | Real glass surfaces for cards, panels and the status line: created near the viewport, removed far from it, three quality tiers |
+| `assets/perf.js` | Frame-time governor that steps the glass tier down on phones that cannot keep up |
+| `assets/world.js` | The scenery behind the glass: patches and stitched thread laid out against the card grid and the sections that hold glass |
 | `assets/hero.js` | The draggable glass lens over the wordmark: drag, glide, light that follows the pointer or the tilt of the phone |
 | `assets/boot.js` | Sets theme and language before first paint |
 | `assets/vendor/` | `glassy-liquid` build and its license |
@@ -72,8 +75,10 @@ Open `http://localhost:8000`. Outside GitHub Actions the repository comes from `
 | Change | Where |
 |---|---|
 | Text in either language | `assets/i18n.js` (Turkish text on the page itself lives in `index.html`) |
-| Turquoise and red | `--turquoise` and `--flag-red` at the top of `assets/style.css`, then the `--bg-*`, `--patch-*`, `--wm-stitch` and `--red-*` tokens in each theme block; `404.html`, `favicon.svg` and the two images carry the same colors |
-| Surface colors | The tokens at the top of `assets/style.css` |
+| Turquoise and red | `--turquoise` and `--flag-red` at the top of `assets/style.css`, then the `--bg-*`, `--patch-*`, `--world-*`, `--thread-*`, `--orb-*`, `--wm-stitch` and `--red-*` tokens in each theme block; `404.html`, `favicon.svg` and the two images carry the same colors |
+| Surface colors | The tokens at the top of `assets/style.css`; the tint of each glass surface is `--glass-card-fill`, `--glass-panel-fill`, `--glass-pill-fill`, `--glass-bar-fill` or `--glass-field-fill` |
+| Glass strength | `KINDS` in `assets/glass.js` sets bezel, refraction, blur and specular light for cards, panels and the status line |
+| Where scenery appears | `ZONES` in `assets/world.js` lists the sections that get patches and thread |
 | Lens size and strength | `--lens-w` and `--lens-h` on `.stage` in `assets/style.css`; `tune()` in `assets/hero.js` derives bezel, refraction and dispersion from the lens height |
 | Category of a new app | `CATEGORIES` in `.github/scripts/site_catalog.py`; unlisted apps show up under `other` |
 | Display name of a build | `TITLES` in the same script |
@@ -93,12 +98,41 @@ Glass is drawn one of three ways. The choice is made at run time and shows as `d
 | `data-glass` | Browsers | How it is drawn |
 |---|---|---|
 | `live` | Chromium (Chrome, Edge, Brave, Opera, Samsung Internet) | `backdrop-filter: url(#svg)` refracts whatever is really behind the glass, page content included |
-| `scene` | Firefox, Safari | The page is a `glass-scene`. `assets/backdrop.js` paints the wallpaper and the hero patch (wordmark, thread, seam) to canvases and WebGL refracts those, so the lens and the controls bend the wallpaper and the hero art. Cards and text behind a control are covered by its frosted fill instead of refracted |
+| `scene` | Firefox, Safari | The page is a `glass-scene`. `assets/backdrop.js` paints the wallpaper and the hero patch (wordmark, thread, seam) to canvases and WebGL refracts those, so the lens and the controls bend the wallpaper and the hero art. Cards, panels and the status line use the library's frosted CSS engine over the live page, so the scenery and text behind them still show through |
 | `frost` | Browsers without WebGL | Same layout with a plain frosted look |
 
-Real refraction of live page content needs `backdrop-filter: url(#svg)`, which only Chromium supports. Cards, panels, chips and the status line are plain translucent CSS without `backdrop-filter`, and only the chrome (header, tab bar, search, segmented control, menu, sheet, call to action buttons, lens) is glass, which keeps scrolling smooth on phones.
+Real refraction of live page content needs `backdrop-filter: url(#svg)`, which only Chromium supports. There, cards, panels and the status line are real glass surfaces made with `glass()` from the library: they bend the patches, seams, thread and dots behind them and carry a rim, a specular edge and a shadow. Everywhere else they use the library's frosted CSS engine (`engine: "css"`). Chips, variant pills and the buttons on cards are plain CSS with a gel highlight and no `backdrop-filter`. The chrome (header, tab bar, search, segmented control, menu, sheet, call to action buttons, lens) is glass in every browser.
 
 The wallpaper canvas is capped at 2x pixel density and 6 megapixels, and is repainted on resize, theme change and zoom. The lens wakes the scene on every move, so its content never lags behind its position.
+
+## Glass surfaces and quality tiers
+
+`assets/glass.js` gives every `.card`, `.panel` and `.status` a glass surface and keeps the cost bounded on phones:
+
+- A surface exists only while its element is within 70% of a screen height of the viewport. Elements that scroll far away lose it and get a new one on the way back. Cards rendered later by search, filters or sorting are picked up automatically.
+- A host with a surface gets the `is-glass` class, which makes its own background and border transparent so the glass layers (`gl-fx`) do not sit on top of a second fill.
+- Three tiers trade looks for speed. The tier shows as `data-glass-tier` on `<html>`.
+
+| Tier | Cards, panels and status line |
+|---|---|
+| `full` | Refracting glass on Chromium, frosted glass elsewhere |
+| `lite` | Frosted glass everywhere: one `backdrop-filter: blur`, no SVG refraction |
+| `flat` | No surfaces, plain translucent CSS fills |
+
+A visit starts in `full`, or in `lite` when the browser reports 2 GB of memory or 2 CPU cores or fewer. `assets/perf.js` times frames while the visitor scrolls (after the first 2.5 seconds) and steps one tier down when more than 30% of the last 120 frames took longer than 30 ms. The tier is remembered in `localStorage` (`patchy-glass-tier`) for 7 days. Visitors who ask for reduced transparency, more contrast or forced colors always get `flat`, and it switches live when the setting changes.
+
+Two query parameters help with testing:
+
+| Parameter | Effect |
+|---|---|
+| `?glass-tier=full`, `lite` or `flat` | Forces a tier, remembers it for 7 days and turns the governor off |
+| `?glass=scene` | Makes Chromium take the Firefox and Safari path (`glass-scene` and WebGL), so that path can be checked without Firefox |
+
+## Scenery behind the glass
+
+Glass only shows what is behind it, so `assets/world.js` fills the space behind the cards and panels. It measures the card grid, the companion list, the process steps and the verify and install columns. In each of those zones it lays out turquoise and red patches (stitched fabric with a dashed seam and a dot grid) and two dashed threads that fade in and out at the zone edges. Patches and thread never sit behind headings or intro text, so reading text stays on the plain wallpaper. The soft orbs are a repeating CSS background across the whole page.
+
+The layout is recomputed when the page width or the height of a zone changes, and patch size follows the page width (0.9x to 1.5x). Everything lives in `.world`, which takes no pointer events.
 
 ## Phones
 
@@ -109,4 +143,4 @@ The wallpaper canvas is capped at 2x pixel density and 6 megapixels, and is repa
 
 ## Accessibility
 
-`prefers-reduced-motion` skips the stitching animation and the lens intro and glide. `prefers-reduced-transparency` swaps glass for solid fills, `prefers-contrast: more` raises text and edge contrast, and forced colors drop the decoration and the lens.
+`prefers-reduced-motion` skips the stitching animation, the lens intro and glide, and the card transitions. `prefers-reduced-transparency` and `prefers-contrast: more` turn the card, panel and status glass off (the `flat` tier), use solid panel fills and halve the scenery; `prefers-contrast: more` also raises text and edge contrast. Forced colors turn those surfaces off too and drop the scenery and the lens.

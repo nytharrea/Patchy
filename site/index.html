@@ -31,12 +31,9 @@
 
 <glass-scene id="scene" class="scene">
 <div class="page">
-  <div class="fabric fabric-a" aria-hidden="true"></div>
-  <div class="fabric fabric-b" aria-hidden="true"></div>
-  <div class="fabric fabric-c" aria-hidden="true"></div>
-  <div class="fabric fabric-d" aria-hidden="true"></div>
+  <div class="world" id="world" aria-hidden="true"></div>
 
-  <glass-surface class="top" radius="capsule" blur="20">
+  <glass-surface class="top" radius="capsule" blur="7" bezel="18" refraction="16">
     <div class="top-in">
       <a class="brand" href="#top" aria-label="Patchy ana sayfa" data-i18n-attr="aria-label:head.home">
         <img src="favicon.svg" alt="" width="30" height="30"><span>Patchy</span>
@@ -77,7 +74,7 @@
           <p class="lead" data-i18n="apps.lead">Son sürümdeki imzalı APK'lar. İndir ya da Obtainium ile güncel tut.</p>
         </div>
         <div class="toolbar">
-          <glass-search id="q" placeholder="Uygulama ara" data-i18n-attr="placeholder:apps.search"></glass-search>
+          <glass-search id="q" blur="6" placeholder="Uygulama ara" data-i18n-attr="placeholder:apps.search"></glass-search>
           <glass-menu id="sort" placement="bottom-end">
             <glass-button slot="trigger" aria-label="Sırala" data-i18n-attr="aria-label:apps.sort">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10"/><path d="M4 12h7"/><path d="M4 17h4"/><path d="M17 5v14"/><path d="m13.5 15.5 3.5 3.5 3.5-3.5"/></svg>
@@ -220,7 +217,7 @@
   </footer>
 </div>
 
-<glass-tab-bar id="tabs" class="tabs" value="apps" aria-label="Bölümler" data-i18n-attr="aria-label:nav.label">
+<glass-tab-bar id="tabs" class="tabs" blur="6" value="apps" aria-label="Bölümler" data-i18n-attr="aria-label:nav.label">
   <glass-tab value="apps">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>
     <span data-i18n="nav.apps">Uygulamalar</span>

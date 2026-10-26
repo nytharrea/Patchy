@@ -43,6 +43,7 @@ export async function initLens(stage, glass, scenes) {
       zoom: 1.12,
       fill: "rgba(0,0,0,0)",
       dispersion: 0.2,
+      blur: document.documentElement.dataset.glass === "live" ? 0.6 : 0,
       bezel: clamp(Math.round(height * 0.2), 11, 16),
       refraction: clamp(Math.round(height * 0.12), 6, 9),
     });

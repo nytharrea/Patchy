@@ -16,7 +16,10 @@ import {
   safeHttps,
 } from "./data.js";
 import { initBackdrops, initSeam } from "./backdrop.js";
+import { createGlass } from "./glass.js";
 import { initLens } from "./hero.js";
+import { govern } from "./perf.js";
+import { initWorld } from "./world.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -43,6 +46,7 @@ const state = {
   sort: "name",
   pick: new Map(),
   sheet: null,
+  glass: null,
 };
 
 function icon(name) {
@@ -310,7 +314,7 @@ function renderGrid() {
 function renderStatus() {
   const box = $("#status");
   const dot = el("span", { class: "dot", "aria-hidden": "true" });
-  box.replaceChildren();
+  box.replaceChildren(...box.querySelectorAll(":scope > gl-fx"));
 
   if (state.phase === "loading") {
     box.dataset.state = "loading";
@@ -699,11 +703,25 @@ async function load({ force = false } = {}) {
   renderAll();
 }
 
+function initSurfaces(glass) {
+  try {
+    const kit = createGlass(glass);
+    state.glass = kit;
+    kit.track(document);
+    kit.watch($("#grid"));
+    kit.watch($("#companion-list"));
+    govern(kit);
+  } catch (error) {
+    document.documentElement.dataset.glassTier = "flat";
+  }
+}
+
 async function loadGlass() {
   try {
     const glass = await import("./vendor/glassy-liquid.min.js");
     const stage = $(".stage");
     const scenes = initBackdrops(glass, { scene: $("#scene"), stage });
+    initSurfaces(glass);
     await initLens(stage, glass, scenes);
   } catch (error) {
     document.documentElement.classList.add("no-glass");
@@ -712,6 +730,7 @@ async function loadGlass() {
 
 async function boot() {
   applyTranslations();
+  initWorld($("#world"), $(".page"));
   initSeam($(".stage"));
   initTheme();
   initLang();

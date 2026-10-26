@@ -4,8 +4,8 @@ Third-party software shipped with this site
 glassy-liquid 0.1.0
   Liquid Glass web components (refraction, specular light, iOS 26 style controls).
   License: MIT, Copyright (c) 2026 thirtynine
-  Source: https://github.com/9und30/glassy-liquid (commit f9f701d5de0a10dfaefbba6d6af6f977850d9957)
-  File: assets/vendor/glassy-liquid.min.js, built from src/elements.ts with esbuild (bundle, minify, ESM).
+  Source: https://github.com/9und30/glassy-liquid (commit 2361eb1f03979703db988180028ccc6d5fc23fe5)
+  File: assets/vendor/glassy-liquid.min.js, the single-file ESM bundle of that commit (dist/glassy-liquid.min.js upstream). The banner inside the file names the commit.
   License text: assets/vendor/LICENSE-glassy-liquid.txt
 
 Inter and Inter Display

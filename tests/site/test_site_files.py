@@ -113,6 +113,32 @@ def test_vendored_library_ships_with_its_license_and_notice():
     assert "glassy-liquid" in notices
 
 
+def test_notice_names_the_commit_of_the_vendored_build():
+    banner = _read(ASSETS / "vendor" / "glassy-liquid.min.js").splitlines()[0]
+    short = re.search(r"\(([0-9a-f]{7,40})\)", banner)
+    assert short, "vendored build has no commit in its banner"
+
+    full = re.search(r"commit ([0-9a-f]{40})", _read(SITE / "THIRD_PARTY_NOTICES.txt"))
+
+    assert full, "notice names no commit"
+    assert full.group(1).startswith(short.group(1))
+
+
+def test_glass_surfaces_and_world_are_wired_into_the_page():
+    app = _read(ASSETS / "app.js")
+
+    for module in ("glass.js", "perf.js", "world.js"):
+        assert f'"./{module}"' in app, f"app.js does not load {module}"
+    assert 'id="world"' in _read(SITE / "index.html")
+
+
+def test_glass_surfaces_step_aside_for_accessibility_preferences():
+    source = _read(ASSETS / "glass.js")
+
+    for query in ("prefers-reduced-transparency: reduce", "prefers-contrast: more", "forced-colors: active"):
+        assert query in source, f"glass.js ignores {query}"
+
+
 def test_palette_is_turquoise_and_turkish_red():
     stylesheet = _read(ASSETS / "style.css").lower()
 

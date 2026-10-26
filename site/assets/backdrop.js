@@ -216,10 +216,15 @@ function whenSewn(stitch) {
 }
 
 export function initBackdrops(glass, { scene, stage }) {
-  const live = glass.supportsBackdropSvg();
+  const forced = new URLSearchParams(location.search).get("glass") === "scene";
+  const live = glass.supportsBackdropSvg() && !forced;
   const webgl = glass.supportsWebGL();
   root.dataset.glass = live ? "live" : webgl ? "scene" : "frost";
   if (live || !webgl || !scene || !stage) return null;
+  if (forced) {
+    scene.setAttribute("force", "");
+    stage.setAttribute("force", "");
+  }
 
   const svg = stage.querySelector(".wordmark svg");
   const fill = svg && svg.querySelector(".wm-fill");
