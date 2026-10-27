@@ -36,6 +36,8 @@
   --measure: 1120px;
   --tabbar-room: 112px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --rim-a: rgba(var(--arc-a-hot), 0) 88.5%, rgba(var(--arc-a-hot), 0.5) 90.8%, rgb(var(--arc-a-spec)) 92%, rgb(var(--arc-a-spec)) 92.8%, rgba(var(--arc-a-hot), 0.4) 94%, transparent 96%;
+  --rim-b: rgba(var(--arc-b-hot), 0) 88.5%, rgba(var(--arc-b-hot), 0.5) 90.8%, rgb(var(--arc-b-spec)) 92%, rgb(var(--arc-b-spec)) 92.8%, rgba(var(--arc-b-hot), 0.4) 94%, transparent 96%;
 }
 
 :root[data-theme="dark"] {
@@ -48,8 +50,8 @@
   --bg-b: #a60d1c;
   --bg-c: #0a7385;
   --ink: #f2fffd;
-  --ink-soft: rgba(242, 255, 253, 0.78);
-  --ink-faint: rgba(242, 255, 253, 0.56);
+  --ink-soft: rgba(242, 255, 253, 0.86);
+  --ink-faint: rgba(242, 255, 253, 0.68);
   --dot: rgba(255, 255, 255, 0.15);
   --panel: rgba(8, 38, 46, 0.76);
   --panel-solid: #0b2a33;
@@ -118,6 +120,21 @@
   --world-red-dot: rgba(255, 200, 205, 0.18);
   --thread-a: rgba(111, 240, 226, 0.66);
   --thread-b: rgba(255, 96, 106, 0.74);
+  --arc-dim: 0.05;
+  --rim-opacity: 1;
+  --arc-a-deep: 3, 40, 48;
+  --arc-a-mid: 7, 80, 88;
+  --arc-a-bright: 10, 100, 96;
+  --arc-a-glow: 30, 150, 140;
+  --arc-a-hot: 150, 245, 236;
+  --arc-a-spec: 232, 255, 252;
+  --arc-b-deep: 46, 4, 9;
+  --arc-b-mid: 98, 6, 15;
+  --arc-b-bright: 150, 10, 22;
+  --arc-b-glow: 200, 40, 52;
+  --arc-b-hot: 255, 150, 130;
+  --arc-b-spec: 255, 236, 226;
+  --glass-gloss: rgba(255, 255, 255, 0.14);
   --code-bg: rgba(0, 12, 16, 0.55);
   --skeleton: rgba(255, 255, 255, 0.07);
   --selection: #e30a17;
@@ -203,6 +220,21 @@
   --world-red-dot: rgba(160, 8, 24, 0.16);
   --thread-a: rgba(8, 128, 118, 0.66);
   --thread-b: rgba(227, 10, 23, 0.6);
+  --arc-dim: 1;
+  --rim-opacity: 0;
+  --arc-a-deep: 90, 214, 204;
+  --arc-a-mid: 140, 236, 228;
+  --arc-a-bright: 200, 250, 245;
+  --arc-a-glow: 48, 213, 200;
+  --arc-a-hot: 255, 255, 255;
+  --arc-a-spec: 255, 255, 255;
+  --arc-b-deep: 255, 140, 150;
+  --arc-b-mid: 255, 184, 190;
+  --arc-b-bright: 255, 222, 225;
+  --arc-b-glow: 255, 90, 104;
+  --arc-b-hot: 255, 255, 255;
+  --arc-b-spec: 255, 255, 255;
+  --glass-gloss: rgba(255, 255, 255, 0.46);
   --code-bg: rgba(255, 255, 255, 0.66);
   --skeleton: rgba(6, 38, 45, 0.07);
   --selection: #e30a17;
@@ -418,6 +450,62 @@ glass-scene.scene {
   background-repeat: repeat-y;
 }
 
+.arcs,
+.rims {
+  position: absolute;
+  inset: 0;
+}
+
+.arc {
+  position: absolute;
+  background:
+    radial-gradient(
+      circle closest-side,
+      transparent 0 88%,
+      rgba(var(--arc-hot), 0) 88.5%,
+      rgba(var(--arc-hot), calc(0.5 * var(--arc-dim))) 90.8%,
+      rgba(var(--arc-spec), var(--arc-dim)) 92%,
+      rgba(var(--arc-spec), var(--arc-dim)) 92.8%,
+      rgba(var(--arc-hot), calc(0.4 * var(--arc-dim))) 94%,
+      transparent 96%
+    ),
+    radial-gradient(
+      circle closest-side,
+      transparent 0 52%,
+      rgba(var(--arc-deep), 0) 53%,
+      rgba(var(--arc-deep), 0.86) 62%,
+      rgba(var(--arc-mid), 0.9) 74%,
+      rgba(var(--arc-bright), 0.9) 86%,
+      rgba(var(--arc-glow), 0.14) 94%,
+      transparent 99%
+    );
+}
+
+.arc-a {
+  --arc-deep: var(--arc-a-deep);
+  --arc-mid: var(--arc-a-mid);
+  --arc-bright: var(--arc-a-bright);
+  --arc-glow: var(--arc-a-glow);
+  --arc-hot: var(--arc-a-hot);
+  --arc-spec: var(--arc-a-spec);
+}
+
+.arc-b {
+  --arc-deep: var(--arc-b-deep);
+  --arc-mid: var(--arc-b-mid);
+  --arc-bright: var(--arc-b-bright);
+  --arc-glow: var(--arc-b-glow);
+  --arc-hot: var(--arc-b-hot);
+  --arc-spec: var(--arc-b-spec);
+}
+
+.rim {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  opacity: var(--rim-opacity);
+}
+
 .world .thread {
   position: absolute;
   top: 0;
@@ -451,6 +539,7 @@ glass-scene.scene {
 }
 
 .patch {
+  opacity: 0.82;
   --patch-fill-a: var(--world-a);
   --patch-fill-b: var(--world-b);
   --patch-fill-hi: var(--world-hi);
@@ -1013,7 +1102,7 @@ glass-scene.stage {
 
 .card.is-glass::before,
 .panel.is-glass::before {
-  display: none;
+  background: linear-gradient(135deg, var(--glass-gloss), transparent 42%);
 }
 
 .status.is-glass[data-state="error"]::after {

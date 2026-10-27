@@ -63,7 +63,7 @@ Open `http://localhost:8000`. Outside GitHub Actions the repository comes from `
 | `assets/backdrop.js` | Picks the glass engine (`data-glass`) and paints the wallpaper and the hero patch to canvases for browsers that cannot refract live content |
 | `assets/glass.js` | Real glass surfaces for cards, panels and the status line: created near the viewport, removed far from it, three quality tiers |
 | `assets/perf.js` | Frame-time governor that steps the glass tier down on phones that cannot keep up |
-| `assets/world.js` | The scenery behind the glass: patches and stitched thread laid out against the card grid and the sections that hold glass |
+| `assets/world.js` | The scenery behind the glass: light arcs in turquoise and red, plus patches and stitched thread, laid out against the page, the card grid and the sections that hold glass |
 | `assets/hero.js` | The draggable glass lens over the wordmark: drag, glide, light that follows the pointer or the tilt of the phone |
 | `assets/boot.js` | Sets theme and language before first paint |
 | `assets/vendor/` | `glassy-liquid` build and its license |
@@ -75,10 +75,11 @@ Open `http://localhost:8000`. Outside GitHub Actions the repository comes from `
 | Change | Where |
 |---|---|
 | Text in either language | `assets/i18n.js` (Turkish text on the page itself lives in `index.html`) |
-| Turquoise and red | `--turquoise` and `--flag-red` at the top of `assets/style.css`, then the `--bg-*`, `--patch-*`, `--world-*`, `--thread-*`, `--orb-*`, `--wm-stitch` and `--red-*` tokens in each theme block; `404.html`, `favicon.svg` and the two images carry the same colors |
+| Turquoise and red | `--turquoise` and `--flag-red` at the top of `assets/style.css`, then the `--bg-*`, `--patch-*`, `--world-*`, `--thread-*`, `--orb-*`, `--arc-*`, `--wm-stitch` and `--red-*` tokens in each theme block; `404.html`, `favicon.svg` and the two images carry the same colors |
 | Surface colors | The tokens at the top of `assets/style.css`; the tint of each glass surface is `--glass-card-fill`, `--glass-panel-fill`, `--glass-pill-fill`, `--glass-bar-fill` or `--glass-field-fill` |
-| Glass strength | `KINDS` in `assets/glass.js` sets bezel, refraction, blur and specular light for cards, panels and the status line |
-| Where scenery appears | `ZONES` in `assets/world.js` lists the sections that get patches and thread |
+| Glass strength | `KINDS` in `assets/glass.js` sets the edge profile, bezel, refraction, blur, specular light and color fringing (dispersion) for cards, panels and the status line; the round and call to action buttons take `dispersion` and `specular` attributes in `index.html` |
+| Where scenery appears | `ZONES` in `assets/world.js` lists the sections that get patches and thread; the light arcs run along the whole page |
+| Light arcs | `--arc-a-*` (turquoise) and `--arc-b-*` (red) in each theme block set the colors, `--arc-dim` sets how much of the bright edge stays behind text, and `ARC_SPAN` in `assets/world.js` sets how often an arc appears |
 | Lens size and strength | `--lens-w` and `--lens-h` on `.stage` in `assets/style.css`; `tune()` in `assets/hero.js` derives bezel, refraction and dispersion from the lens height |
 | Category of a new app | `CATEGORIES` in `.github/scripts/site_catalog.py`; unlisted apps show up under `other` |
 | Display name of a build | `TITLES` in the same script |
@@ -130,9 +131,15 @@ Two query parameters help with testing:
 
 ## Scenery behind the glass
 
-Glass only shows what is behind it, so `assets/world.js` fills the space behind the cards and panels. It measures the card grid, the companion list, the process steps and the verify and install columns. In each of those zones it lays out turquoise and red patches (stitched fabric with a dashed seam and a dot grid) and two dashed threads that fade in and out at the zone edges. Patches and thread never sit behind headings or intro text, so reading text stays on the plain wallpaper. The soft orbs are a repeating CSS background across the whole page.
+Glass only shows what is behind it, and a lens only looks like a lens when there is something crisp to bend. `assets/world.js` fills the space behind the cards and panels with two kinds of scenery.
 
-The layout is recomputed when the page width or the height of a zone changes, and patch size follows the page width (0.9x to 1.5x). Everything lives in `.world`, which takes no pointer events.
+**Light arcs.** Large turquoise and red circles sit half off the left and right edges of the page, from the hero down to the footer, so their curved edges sweep across the content. Each arc has a wide body that runs from deep to bright and a thin hot edge on its outer side. The hot edge is what the glass bends most visibly, but it is bright, so it must never sit behind text. The script measures every heading, paragraph, toolbar, chip row and the inside of every card, panel and status line, and draws the hot edge (`.rim`) only in the gaps between them and along the edges of the glass, as short glints that taper along the curve. Behind text only a faint trace remains (`--arc-dim`), and the body colors are kept dark enough in the dark theme for text to keep its contrast. In the light theme the edge is white and text is dark, so the edge is drawn everywhere.
+
+**Patches and thread.** In the sections that hold glass (the card grid, the companion list, the process steps and the verify and install columns) the script lays out turquoise and red patches (stitched fabric with a dashed seam and a dot grid) and two dashed threads that fade in and out at the zone edges. They give the glass small, high contrast details to bend. Patches and thread never sit behind headings or intro text, so reading text stays on the plain wallpaper. The soft orbs are a repeating CSS background across the whole page.
+
+The layout is recomputed when the page width, the height of a zone or the position of a text block changes, and patch size follows the page width (0.9x to 1.5x). Everything lives in `.world`, which takes no pointer events.
+
+The glass itself uses the library's `lip` edge profile on cards and panels: a flat middle with a steep rim, so the content stays readable and the bending happens at the edge, where the glints are.
 
 ## Phones
 
@@ -143,4 +150,4 @@ The layout is recomputed when the page width or the height of a zone changes, an
 
 ## Accessibility
 
-`prefers-reduced-motion` skips the stitching animation, the lens intro and glide, and the card transitions. `prefers-reduced-transparency` and `prefers-contrast: more` turn the card, panel and status glass off (the `flat` tier), use solid panel fills and halve the scenery; `prefers-contrast: more` also raises text and edge contrast. Forced colors turn those surfaces off too and drop the scenery and the lens.
+`prefers-reduced-motion` skips the stitching animation, the lens intro and glide, and the card transitions. `prefers-reduced-transparency` and `prefers-contrast: more` turn the card, panel and status glass off (the `flat` tier), use solid panel fills and halve the scenery, arcs included; `prefers-contrast: more` also raises text and edge contrast. Forced colors turn those surfaces off too and drop the scenery and the lens.

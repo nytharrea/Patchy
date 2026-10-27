@@ -23,5 +23,8 @@ Design references
   - kube.io, "Liquid Glass in the Browser: Refraction with CSS and SVG" (https://kube.io/blog/liquid-glass-css-svg/)
   - ruri.design, "Liquid Glass" (https://ruri.design/blog/liquid-glass)
   - liquidglass.dev and liquidglassdesign.com
+  - liquidglassdesign.com gallery, "Liquid Glass Button" by Mike Deraco (https://liquidglassdesign.com/gallery/liquid-glass-button)
+    and "Shader Glass Buttons" by Tran Mau Tri Tam (https://liquidglassdesign.com/gallery/shader-glass-buttons),
+    looked at for the bright edge glints, the color fringing on round buttons and the luminous ribbons behind the glass.
   - iyinchao/liquid-glass-studio, huozhi/vaso, OverShifted/LiquidGlass, yurkagon/react-liquid-glass-svg,
     shayann07/liquidglass, gentpan/liquidglass, ybouane/liquidglass (GitHub)

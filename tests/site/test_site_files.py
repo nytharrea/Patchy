@@ -8,10 +8,23 @@ ASSETS = SITE / "assets"
 PAGES = ("index.html", "404.html")
 BRAND_TURQUOISE = "#30d5c8"
 BRAND_RED = "#e30a17"
+ARC_TOKENS = ("--arc-dim", "--rim-opacity") + tuple(
+    f"--arc-{tone}-{part}" for tone in "ab" for part in ("deep", "mid", "bright", "glow", "hot", "spec")
+)
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _theme_block(stylesheet: str, theme: str) -> str:
+    start = stylesheet.index(f':root[data-theme="{theme}"] {{')
+    return stylesheet[start : stylesheet.index("\n}", start)]
+
+
+def _media_block(stylesheet: str, query: str) -> str:
+    start = stylesheet.index(f"@media ({query}) {{")
+    return stylesheet[start : stylesheet.index("\n}", start)]
 
 
 def _dictionary_keys(source: str, name: str) -> set[str]:
@@ -137,6 +150,34 @@ def test_glass_surfaces_step_aside_for_accessibility_preferences():
 
     for query in ("prefers-reduced-transparency: reduce", "prefers-contrast: more", "forced-colors: active"):
         assert query in source, f"glass.js ignores {query}"
+
+
+def test_both_themes_define_every_light_arc_token():
+    stylesheet = _read(ASSETS / "style.css")
+
+    for theme in ("dark", "light"):
+        block = _theme_block(stylesheet, theme)
+        for token in ARC_TOKENS:
+            assert f"{token}:" in block, f"{theme} theme has no {token}"
+
+
+def test_world_draws_light_arcs_and_the_stylesheet_styles_them():
+    script = _read(ASSETS / "world.js")
+    stylesheet = _read(ASSETS / "style.css")
+
+    for name in ('"arcs"', '"rims"', '"rim"', "arc arc-"):
+        assert name in script, f"world.js never creates {name}"
+    for selector in (".arcs,", ".rims {", ".rim {", ".arc {", ".arc-a {", ".arc-b {"):
+        assert selector in stylesheet, f"style.css has no rule for {selector}"
+
+
+def test_light_arcs_step_back_for_accessibility_preferences():
+    stylesheet = _read(ASSETS / "style.css")
+
+    for query in ("prefers-reduced-transparency: reduce", "prefers-contrast: more"):
+        assert ".world" in _media_block(stylesheet, query), f"{query} leaves the scenery at full strength"
+    hidden = _media_block(stylesheet, "forced-colors: active").split("display: none", 1)[0]
+    assert ".world" in hidden
 
 
 def test_palette_is_turquoise_and_turkish_red():

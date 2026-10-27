@@ -1,10 +1,35 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ZONES = [["#grid"], ["#companion-list"], [".steps"], ["#verify .split"], ["#install .split"]];
-const PATCH_SPAN = 420;
+const TEXT = [
+  ".hero .tagline",
+  ".hero .lede",
+  ".hero .fine",
+  ".section-head",
+  ".subhead > h3",
+  ".subhead > p",
+  ".toolbar",
+  ".chips",
+  ".count",
+  ".note",
+  ".linkrow",
+  ".empty",
+  ".notice",
+  ".footer",
+].join(",");
+const GLASS = ".card, .panel, .status";
+const PATCH_SPAN = 600;
 const THREAD_STEP = 430;
+const ARC_SPAN = 1250;
 const MIN_ZONE = 140;
 const FADE = 0.12;
 const QUANTUM = 24;
+const RIM = 22;
+const FEATHER = 16;
+const PAD = 8;
+const MERGE = FEATHER * 2;
+const CORE = 0.92;
+const GLINT_ALONG = 44;
+const GLINT_MIN = 28;
 
 function random(seed) {
   let state = seed >>> 0;
@@ -24,6 +49,16 @@ function svgNode(name, attributes = {}) {
   return node;
 }
 
+function rectsOf(page, selector) {
+  const origin = page.getBoundingClientRect().top;
+  const list = [];
+  for (const node of page.querySelectorAll(selector)) {
+    const rect = node.getBoundingClientRect();
+    if (rect.height > 0) list.push({ top: rect.top - origin, bottom: rect.bottom - origin });
+  }
+  return list;
+}
+
 function measure(page) {
   const origin = page.getBoundingClientRect().top;
   const zones = [];
@@ -41,6 +76,124 @@ function measure(page) {
     if (bottom - top >= MIN_ZONE) zones.push({ top, bottom });
   }
   return zones;
+}
+
+function heroOf(page) {
+  const [rect] = rectsOf(page, ".hero");
+  return rect || null;
+}
+
+function endOf(page, height) {
+  const [rect] = rectsOf(page, ".footer");
+  return rect ? rect.top : height;
+}
+
+function bandsOf(page) {
+  const list = [];
+  for (const rect of rectsOf(page, TEXT)) list.push([rect.top - PAD, rect.bottom + PAD]);
+  for (const rect of rectsOf(page, GLASS)) {
+    if (rect.bottom - rect.top > RIM * 3 + FEATHER * 2) list.push([rect.top + RIM + FEATHER, rect.bottom - RIM - FEATHER]);
+    else list.push([rect.top - PAD, rect.bottom + PAD]);
+  }
+  list.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const band of list) {
+    const last = merged[merged.length - 1];
+    if (last && band[0] - last[1] < MERGE) last[1] = Math.max(last[1], band[1]);
+    else merged.push([band[0], band[1]]);
+  }
+  return merged;
+}
+
+function gapsOf(bands, height) {
+  const gaps = [];
+  let cursor = 0;
+  for (const [start, end] of bands) {
+    if (start - cursor >= MERGE) gaps.push([cursor, start]);
+    cursor = Math.max(cursor, end);
+  }
+  if (height - cursor >= MERGE) gaps.push([cursor, height]);
+  return gaps;
+}
+
+function heroArcs(hero, width) {
+  const span = hero.bottom - hero.top;
+  const left = clamp(width * 1.55, 620, 1080);
+  const right = clamp(width * 1.36, 560, 960);
+  return [
+    { cx: -left * 0.41, cy: hero.bottom + span * 0.07, r: left, tone: "a" },
+    { cx: width + right * 0.51, cy: hero.top + span * 0.17, r: right, tone: "b" },
+  ];
+}
+
+function streamArcs(top, bottom, width) {
+  const next = random(6151);
+  const count = Math.max(1, Math.round((bottom - top) / ARC_SPAN));
+  const step = (bottom - top) / count;
+  const base = clamp(width * 1.3, 520, 900);
+  const list = [];
+  for (let index = 0; index < count; index += 1) {
+    const r = base * (0.85 + next() * 0.35);
+    const reach = 0.38 + next() * 0.2;
+    const left = (index + Math.floor(index / 2)) % 2 === 0;
+    list.push({
+      cx: left ? -r * reach : width + r * reach,
+      cy: top + (index + 0.25 + next() * 0.5) * step,
+      r,
+      tone: index % 2 === 0 ? "a" : "b",
+    });
+  }
+  return list;
+}
+
+function arcNode(arc) {
+  const node = document.createElement("div");
+  node.className = `arc arc-${arc.tone}`;
+  node.style.cssText = `left:${(arc.cx - arc.r).toFixed(1)}px;top:${(arc.cy - arc.r).toFixed(1)}px;width:${(arc.r * 2).toFixed(1)}px;height:${(arc.r * 2).toFixed(1)}px`;
+  return node;
+}
+
+function glintNode(arc, gap, width) {
+  const rho = arc.r * CORE;
+  const low = clamp((gap[0] - arc.cy) / rho, -1, 1);
+  const high = clamp((gap[1] - arc.cy) / rho, -1, 1);
+  const left = arc.cx < width / 2;
+  const nearest = low <= 0 && high >= 0 ? 0 : Math.min(Math.abs(Math.asin(low)), Math.abs(Math.asin(high)));
+  const reach = left ? arc.cx + rho * Math.cos(nearest) : arc.cx - rho * Math.cos(nearest);
+  const half = arc.r * 0.05;
+  if (left ? reach + half < 0 : reach - half > width) return null;
+  const degrees = 180 / Math.PI;
+  const start = left ? Math.asin(low) * degrees + 90 : 270 - Math.asin(high) * degrees;
+  const end = left ? Math.asin(high) * degrees + 90 : 270 - Math.asin(low) * degrees;
+  const span = end - start;
+  if ((span / degrees) * rho < GLINT_MIN) return null;
+  const feather = Math.min(span / 2, (GLINT_ALONG / rho) * degrees);
+  const margin = Math.ceil(half) + 6;
+  const top = gap[0] - margin;
+  const height = gap[1] - gap[0] + margin * 2;
+  const origin = `${arc.cx.toFixed(0)}px ${(arc.cy - top).toFixed(0)}px`;
+  const along = `conic-gradient(from ${start.toFixed(2)}deg at ${origin}, transparent 0deg, #000 ${feather.toFixed(2)}deg, #000 ${(span - feather).toFixed(2)}deg, transparent ${span.toFixed(2)}deg, transparent 360deg)`;
+  const across = `linear-gradient(to bottom, transparent ${margin}px, #000 ${margin + FEATHER}px, #000 ${height - margin - FEATHER}px, transparent ${height - margin}px)`;
+  const mask = `${along}, ${across}`;
+  const node = document.createElement("div");
+  node.className = "rim";
+  node.style.cssText = `top:${top.toFixed(0)}px;height:${height.toFixed(0)}px;background:radial-gradient(circle ${arc.r.toFixed(0)}px at ${origin}, var(--rim-${arc.tone}))`;
+  node.style.maskImage = mask;
+  node.style.webkitMaskImage = mask;
+  node.style.maskComposite = "intersect";
+  node.style.webkitMaskComposite = "source-in";
+  return node;
+}
+
+function glintsFor(gaps, arcs, width) {
+  const list = [];
+  for (const gap of gaps) {
+    for (const arc of arcs) {
+      const node = glintNode(arc, gap, width);
+      if (node) list.push(node);
+    }
+  }
+  return list;
 }
 
 function patchesFor(zone, width, seed, counter) {
@@ -116,15 +269,20 @@ function fadeGradient(id, tone, zone) {
 export function initWorld(world, page) {
   if (!world || !page) return;
 
+  const arcs = document.createElement("div");
+  arcs.className = "arcs";
+  const rims = document.createElement("div");
+  rims.className = "rims";
+
   const svg = svgNode("svg", { class: "thread", "aria-hidden": "true", focusable: "false" });
   const defs = svgNode("defs");
   const strokes = svgNode("g");
   svg.append(defs, strokes);
-  world.append(svg);
 
   const patches = document.createElement("div");
   patches.className = "patches";
-  world.append(patches);
+
+  world.append(arcs, rims, svg, patches);
 
   let signature = "";
   let timer = 0;
@@ -134,13 +292,28 @@ export function initWorld(world, page) {
     const height = Math.round(page.offsetHeight);
     if (!width || !height) return;
     const zones = measure(page);
-    const next = `${width}|${zones.map((zone) => `${Math.round(zone.top / QUANTUM)}:${Math.round(zone.bottom / QUANTUM)}`).join(",")}`;
+    const hero = heroOf(page);
+    const end = endOf(page, height);
+    const bands = bandsOf(page);
+    const next = [
+      width,
+      Math.round(end / QUANTUM),
+      hero ? Math.round(hero.bottom / QUANTUM) : 0,
+      zones.map((zone) => `${Math.round(zone.top / QUANTUM)}:${Math.round(zone.bottom / QUANTUM)}`).join(","),
+      bands.map((band) => `${Math.round(band[0] / 8)}:${Math.round(band[1] / 8)}`).join(","),
+    ].join("|");
     if (next === signature) return;
     signature = next;
 
     svg.setAttribute("width", width);
     svg.setAttribute("height", height);
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+    const lights = [];
+    if (hero) lights.push(...heroArcs(hero, width));
+    lights.push(...streamArcs(hero ? hero.bottom : 0, end, width));
+    arcs.replaceChildren(...lights.map(arcNode));
+    rims.replaceChildren(...glintsFor(gapsOf(bands, height), lights, width));
 
     const gradients = [];
     const paths = [];

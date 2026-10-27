@@ -42,10 +42,10 @@
         <glass-segment value="tr">TR</glass-segment>
         <glass-segment value="en">EN</glass-segment>
       </glass-segmented>
-      <glass-button id="theme" shape="circle" aria-label="Temayı değiştir" data-i18n-attr="aria-label:head.theme">
+      <glass-button id="theme" shape="circle" dispersion="0.5" specular="1.6" aria-label="Temayı değiştir" data-i18n-attr="aria-label:head.theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 3.8v16.4a8.2 8.2 0 0 0 0-16.4z" fill="currentColor"/></svg>
       </glass-button>
-      <glass-button shape="circle" href="https://github.com/nytharrea/Patchy" target="_blank" data-repo-path="" aria-label="GitHub deposu" data-i18n-attr="aria-label:head.repo">
+      <glass-button shape="circle" dispersion="0.5" specular="1.6" href="https://github.com/nytharrea/Patchy" target="_blank" data-repo-path="" aria-label="GitHub deposu" data-i18n-attr="aria-label:head.repo">
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
       </glass-button>
     </div>
@@ -61,8 +61,8 @@
         <p class="tagline" data-i18n="hero.tagline">Android uygulamalarını indirir, yamalar, imzalar ve yayınlar.</p>
         <p class="lede" data-i18n="hero.lede">GitHub Actions üzerinde çalışan bir hat: orijinal APK'yı alır, yama paketlerini uygular, kendi anahtarınla imzalar ve hepsini tek bir GitHub sürümünde toplar. Bilgisayar gerekmez.</p>
         <div class="cta">
-          <glass-button variant="prominent" size="large" href="#apps" data-i18n="hero.apps">Uygulamalara git</glass-button>
-          <glass-button size="large" href="https://github.com/nytharrea/Patchy" target="_blank" data-repo-path="" data-i18n="hero.repo">GitHub'da aç</glass-button>
+          <glass-button variant="prominent" size="large" dispersion="0.45" specular="1.6" href="#apps" data-i18n="hero.apps">Uygulamalara git</glass-button>
+          <glass-button size="large" dispersion="0.55" specular="1.7" href="https://github.com/nytharrea/Patchy" target="_blank" data-repo-path="" data-i18n="hero.repo">GitHub'da aç</glass-button>
         </div>
         <div id="status" class="status" data-state="loading" role="status"><span class="dot" aria-hidden="true"></span><span data-i18n="status.loading">Sürüm bilgisi alınıyor…</span></div>
         <p class="fine" data-i18n="hero.fine">Patchy bağımsız bir projedir; Morphe veya ReVanced projeleriyle bağlantılı değildir.</p>
@@ -76,7 +76,7 @@
         <div class="toolbar">
           <glass-search id="q" blur="6" placeholder="Uygulama ara" data-i18n-attr="placeholder:apps.search"></glass-search>
           <glass-menu id="sort" placement="bottom-end">
-            <glass-button slot="trigger" aria-label="Sırala" data-i18n-attr="aria-label:apps.sort">
+            <glass-button slot="trigger" dispersion="0.5" specular="1.6" aria-label="Sırala" data-i18n-attr="aria-label:apps.sort">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10"/><path d="M4 12h7"/><path d="M4 17h4"/><path d="M17 5v14"/><path d="m13.5 15.5 3.5 3.5 3.5-3.5"/></svg>
               <span data-i18n="apps.sort">Sırala</span>
             </glass-button>

@@ -7,9 +7,9 @@ const TIER_TTL = 7 * 24 * 60 * 60 * 1000;
 const MARGIN = "70% 0px";
 
 const KINDS = [
-  { selector: ".card", token: "--glass-card-fill", bezel: 26, refraction: 26, blur: 4, frost: 12, specular: 1.15 },
-  { selector: ".panel", token: "--glass-panel-fill", bezel: 28, refraction: 26, blur: 4, frost: 12, specular: 1.1 },
-  { selector: ".status", token: "--glass-pill-fill", bezel: 18, refraction: 16, blur: 3, frost: 10, specular: 1.05 },
+  { selector: ".card", token: "--glass-card-fill", profile: "lip", bezel: 24, refraction: 44, blur: 2, frost: 12, specular: 1.75, dispersion: 0 },
+  { selector: ".panel", token: "--glass-panel-fill", profile: "lip", bezel: 24, refraction: 44, blur: 2, frost: 12, specular: 1.7, dispersion: 0 },
+  { selector: ".status", token: "--glass-pill-fill", profile: "squircle", bezel: 18, refraction: 26, blur: 2, frost: 10, specular: 1.6, dispersion: 0.4 },
 ];
 
 const BARS = [
@@ -81,10 +81,12 @@ export function createGlass(lib) {
     const surface = lib.glass(element, {
       material: "regular",
       radius: radius >= height / 2 - 0.5 ? "capsule" : radius,
+      profile: kind.profile,
       bezel: kind.bezel,
       refraction: kind.refraction,
       blur: blurFor(kind),
       specular: kind.specular,
+      dispersion: refracts() ? kind.dispersion : 0,
       fill: tokenValue(kind.token),
       engine: engineFor(),
     });
@@ -191,7 +193,7 @@ export function createGlass(lib) {
       if (next === FLAT) {
         drop(element, record);
       } else if (record.surface) {
-        record.surface.set({ engine: engineFor(), blur: blurFor(record.kind) });
+        record.surface.set({ engine: engineFor(), blur: blurFor(record.kind), dispersion: refracts() ? record.kind.dispersion : 0 });
       } else if (observer) {
         observer.unobserve(element);
         observer.observe(element);
