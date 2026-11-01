@@ -11,9 +11,12 @@ from ..core.concurrency import Job, run_limited
 from ..core.http import github_headers, new_session
 from ..core.settings import settings
 from ..fetch.bundles import fetch_companion
+from ..fetch.github import download_to
 
 PAGE_SIZE = 100
 MEGABYTE = 1024 * 1024
+CONTENT_TYPES = {".apk": "application/vnd.android.package-archive", ".json": "application/json"}
+DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 
 def _headers() -> dict[str, str]:
@@ -58,6 +61,10 @@ def _assert_configured():
 
 def _asset_name(file_name: str) -> str:
     return Path(file_name).name.replace(" ", ".")
+
+
+def _content_type(asset_name: str) -> str:
+    return CONTENT_TYPES.get(Path(asset_name).suffix.lower(), DEFAULT_CONTENT_TYPE)
 
 
 def _names_match(a: str, b: str) -> bool:
@@ -142,9 +149,28 @@ async def delete_tag(tag: str) -> None:
         raise RuntimeError(f"Failed to delete tag {tag}: status={res.status_code} {_json(res)}")
 
 
-async def delete_other_releases(keep_release_id: int) -> None:
+def _patchy_releases(releases: list[dict]) -> list[dict]:
+    builds = [
+        release
+        for release in releases
+        if isinstance(release.get("tag_name"), str)
+        and release["tag_name"].startswith(TAG_PREFIX)
+        and not release.get("draft")
+    ]
+    return sorted(builds, key=lambda release: release["tag_name"], reverse=True)
+
+
+async def previous_release(exclude_tag: str = "") -> dict | None:
+    for release in _patchy_releases(await list_releases()):
+        if release["tag_name"] != exclude_tag:
+            return release
+    return None
+
+
+async def delete_other_releases(keep_release_id: int, keep: int = 0) -> None:
     releases = await list_releases()
     errors: list[str] = []
+    builds: list[dict] = []
 
     for release in releases:
         if release["id"] == keep_release_id:
@@ -154,7 +180,15 @@ async def delete_other_releases(keep_release_id: int) -> None:
         if not tag.startswith(TAG_PREFIX):
             log.info(f"Keeping release that is not a Patchy build: {tag or release['id']}")
             continue
+        builds.append(release)
 
+    builds.sort(key=lambda release: release["tag_name"], reverse=True)
+
+    for release in builds[: max(keep, 0)]:
+        log.info(f"Keeping previous release: {release['tag_name']}")
+
+    for release in builds[max(keep, 0) :]:
+        tag = release["tag_name"]
         log.warn(f"Deleting old release: {tag}")
         try:
             await delete_release(release["id"])
@@ -164,6 +198,14 @@ async def delete_other_releases(keep_release_id: int) -> None:
 
     if errors:
         raise RuntimeError("; ".join(errors))
+
+
+async def download_asset(asset: dict, destination: Path) -> Path:
+    _assert_configured()
+    headers = {**_headers(), "Accept": "application/octet-stream"}
+    size = asset.get("size")
+    await download_to(asset["url"], destination, size if isinstance(size, int) else None, headers)
+    return destination
 
 
 async def get_assets(release_id: int) -> list[dict]:
@@ -211,7 +253,7 @@ async def _upload(upload_url: str, file_path: str, asset_name: str) -> dict:
             url,
             headers={
                 **_headers(),
-                "Content-Type": "application/vnd.android.package-archive",
+                "Content-Type": _content_type(asset_name),
                 "Content-Length": str(file_size),
             },
             content=_iter_file_chunks(file_path),

@@ -196,3 +196,46 @@ def test_statuses_of_unknown_builds_are_ignored(monkeypatch, tmp_path):
     _write_status(root, "artifacts/apk-ghost", "ghost", _status("ghost", total=1.0))
 
     assert telemetry.render_summary() == ""
+
+
+def _detailed(key, **details):
+    return {**_status(key), **details}
+
+
+def test_a_successful_build_with_notes_gets_a_section_for_them():
+    status = _detailed(
+        "youtube",
+        patches={"applied": ["a", "b"], "failed": []},
+        attempts=[{"version": "9.9.9", "stage": "patch", "reason": "boom | <x>"}],
+        forced=True,
+        warnings=["careful *now*"],
+    )
+
+    table = telemetry.render_table(["youtube", "gboard"], {"youtube": status, "gboard": _status("gboard")})
+
+    assert "### Build notes" in table
+    assert "- `youtube` — 2 patch(es) applied" in table
+    assert "  - Newer versions could not be used: 9.9.9 (patch): boom \\| \\<x\\>" in table
+    assert "  - Patched with `--force`" in table
+    assert "  - ⚠️ careful \\*now\\*" in table
+    assert "`gboard`" not in table.split("### Build notes")[1]
+
+
+def test_there_is_no_notes_section_when_nothing_is_worth_noting():
+    table = telemetry.render_table(["youtube"], {"youtube": _status("youtube", total=1.0)})
+
+    assert "Build notes" not in table
+
+
+def test_a_failed_build_lists_the_versions_that_were_tried():
+    status = _detailed(
+        "gboard",
+        ok=False,
+        error="HTTP 500",
+        attempts=[{"version": "2.1", "stage": "patch", "reason": "x"}, {"version": "2.0", "stage": "patch"}],
+    )
+
+    table = telemetry.render_table(["gboard"], {"gboard": status})
+
+    assert "- `gboard` — HTTP 500 (tried 2.1, 2.0)" in table
+    assert "Build notes" not in table

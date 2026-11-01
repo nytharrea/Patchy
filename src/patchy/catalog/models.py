@@ -48,6 +48,7 @@ class BuildConfig(TypedDict):
     options: dict[str, str | None]
     force_version: str | None
     force_build: str | None
+    force: bool
 
 
 class CompanionVariant(TypedDict):

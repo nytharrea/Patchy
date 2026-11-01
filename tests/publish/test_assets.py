@@ -346,3 +346,86 @@ def test_cut_notes_closes_an_open_code_block_within_the_room():
     assert len(cut) <= 300
     assert cut.endswith("\n```")
     assert cut.count("```") % 2 == 0
+
+
+def test_match_asset_reads_names_whose_spaces_github_turned_into_dots():
+    assert match_asset("Proton.VPN-4.1.apk")[1:] == ("Proton VPN", "4.1")
+    assert match_asset("Proton VPN-4.1.apk")[1:] == ("Proton VPN", "4.1")
+    assert match_asset("Google.Photos-7.2.apk")[1:] == ("Google Photos", "7.2")
+
+
+def _status(**payload):
+    return {"build_key": "youtube", "ok": True, **payload}
+
+
+def _body(statuses, apks=None):
+    return build_release_body(apks or _matched("youtube"), None, statuses={"youtube": statuses})
+
+
+def test_release_body_lists_the_patches_that_were_applied_per_app():
+    body = _body(_status(patches={"applied": ["Hide ads", "Video ads"], "failed": []}))
+
+    assert "<summary>YouTube - 2 patches applied</summary>" in body
+    assert "`Hide ads`, `Video ads`" in body
+    assert body.index("<details>") < body.index("---")
+
+
+def test_release_body_uses_the_singular_for_one_patch_and_skips_apps_without_a_report():
+    assert "1 patch applied" in _body(_status(patches={"applied": ["Only one"], "failed": []}))
+    assert "<details>" not in _body(_status(patches={"applied": [], "failed": []}))
+    assert "<details>" not in _body(_status())
+
+
+def test_release_body_cuts_a_very_long_patch_list():
+    names = [f"Patch {index}" for index in range(assets.APPLIED_SHOWN_LIMIT + 7)]
+
+    body = _body(_status(patches={"applied": names, "failed": []}))
+
+    assert f"{len(names)} patches applied" in body
+    assert "`Patch 0`" in body
+    assert f"`Patch {assets.APPLIED_SHOWN_LIMIT}`" not in body
+    assert "and 7 more" in body
+
+
+def test_release_body_explains_a_step_down_a_forced_patch_and_warnings():
+    body = _body(
+        _status(
+            attempts=[{"version": "9.9.9", "stage": "patch", "reason": "Hide ads: boom"}],
+            forced=True,
+            warnings=["first", "second", "third", "fourth", "fifth"],
+        )
+    )
+
+    assert "  * Newer versions could not be used: `9.9.9` (patch: `Hide ads: boom`)" in body
+    assert "  * Patched with `--force`, so the patches were not checked against this version." in body
+    assert "⚠️ `first`" in body
+    assert "⚠️ `third`" in body
+    assert "`fourth`" not in body
+    assert "and 2 more warning(s)" in body
+
+
+def test_release_body_marks_an_app_that_was_carried_over_and_lists_no_patches_for_it():
+    apk = {**_matched("youtube")[0], "carried": True, "carried_from": "build-2026-10-03T10-00-00"}
+    apk["carried_reason"] = "HTTP 500\nsecond line"
+
+    body = _body(_status(patches={"applied": ["Hide ads"], "failed": []}), [apk])
+
+    assert "Carried over from `build-2026-10-03T10-00-00`, because this app was not rebuilt in this run." in body
+    assert "The new build failed: `HTTP 500 second line`" in body
+    assert "<details>" not in body
+
+
+def test_release_body_shows_the_real_version_of_an_app_that_is_only_called_latest():
+    apk = {**_matched("youtube")[0], "version": "latest"}
+
+    body = _body(_status(apk={"version_name": "1.2337"}), [apk])
+
+    assert "**YouTube** - `latest` (`1.2337`)" in body
+    assert "`1.0.0` (" not in _body(_status(apk={"version_name": "1.2337"}))
+
+
+def test_release_body_keeps_backticks_and_mentions_from_breaking_the_notes():
+    body = _body(_status(warnings=["bad `tick` from @octocat"]))
+
+    assert "@octocat" not in body
+    assert "`bad 'tick' from octocat`" in body

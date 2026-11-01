@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from patchy import catalog
-from patchy.engine import build, label
+from patchy.engine import build, label, notes, sanity
 from patchy.engine.verify import SignatureError, UnpinnedSignature
 from patchy.fetch import apkmirror, github
 from patchy.fetch.bundles import Tools
@@ -14,6 +14,7 @@ from .axml import apk_labels, build_apk, build_manifest, reference_label, text_l
 from .bundles import write_bundle
 
 FINGERPRINT = "3d7a1223019aa39d9ea0e3436ab7c0896bfb4fb679f4de5fe7c23f326c8f994a"
+REAL_FACTS = sanity.ApkFacts("com.example.the-app", "1.2.3", 123, frozenset({"arm64-v8a"}), True)
 
 
 def _fake_build(app_slug: str, source: dict, force_version: str | None = "1.2.3") -> dict:
@@ -60,6 +61,13 @@ def _common_mocks(monkeypatch, tmp_path, apk_source: dict, force_version: str | 
         return None
 
     monkeypatch.setattr(build, "list_versions", fake_list_versions)
+
+    async def fake_list_patch_names(cli_jar, bundles, pkg):
+        return None
+
+    monkeypatch.setattr(build, "list_patch_names", fake_list_patch_names)
+    monkeypatch.setattr(build.sanity, "inspect_quietly", lambda path: None)
+    monkeypatch.setattr(build.sanity, "inspect_apk", lambda path: REAL_FACTS)
     return build_key
 
 
@@ -849,6 +857,10 @@ STABLE_ONLY = "Most common compatible versions:\n\t8.8.8 (3 patches)\n\t7.7.7 (2
 THREE_STABLE_VERSIONS = (
     "Most common compatible versions:\n\t8.8.8 (3 patches)\n\t7.7.7 (3 patches)\n\t6.6.6 (3 patches)\n\n"
 )
+THREE_EXPERIMENTAL_FIRST = (
+    "Most common compatible versions:\n\t9.9.9 (3 patches)\n\t9.9.8 (3 patches)\n\t9.9.7 (3 patches)\n"
+    "\t8.8.8 (3 patches)\n\t7.7.7 (2 patches)\n\n"
+)
 
 
 def _versioned_apkmirror_downloads(monkeypatch, tmp_path):
@@ -876,14 +888,14 @@ def _patch_failing_for(monkeypatch, tmp_path, failing, error=None):
     return patched
 
 
-async def test_process_build_falls_back_to_a_stable_version_when_the_experimental_one_cannot_be_patched(
+async def test_process_build_falls_back_to_a_stable_version_when_the_experimental_ones_cannot_be_patched(
     monkeypatch, tmp_path
 ):
     apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
     build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
-    modes = _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    modes = _list_versions_by_mode(monkeypatch, all_versions=THREE_EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
     downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
-    patched = _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+    patched = _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9", "9.9.8", "9.9.7"})
     warnings = []
     monkeypatch.setattr(build.log, "warn", warnings.append)
 
@@ -891,8 +903,8 @@ async def test_process_build_falls_back_to_a_stable_version_when_the_experimenta
 
     assert result["version"] == "8.8.8"
     assert result["name"] == "The App-8.8.8.apk"
-    assert [download["version"] for download in downloads] == ["9.9.9", "8.8.8"]
-    assert patched == ["downloaded-9.9.9.apk", "downloaded-8.8.8.apk"]
+    assert [download["version"] for download in downloads] == ["9.9.9", "9.9.8", "9.9.7", "8.8.8"]
+    assert patched == [f"downloaded-{version}.apk" for version in ("9.9.9", "9.9.8", "9.9.7", "8.8.8")]
     assert modes == [True, False]
     assert any("9.9.9" in line and "experimental" in line and "8.8.8" in line for line in warnings)
 
@@ -983,17 +995,18 @@ async def test_process_build_asks_the_cli_for_stable_versions_only_after_a_failu
     assert modes == [True]
 
 
-async def test_process_build_does_not_fall_back_when_the_version_that_failed_is_stable(monkeypatch, tmp_path):
+async def test_process_build_does_not_fall_back_when_the_versions_that_failed_are_stable(monkeypatch, tmp_path):
     apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
     build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
     _list_versions_by_mode(monkeypatch, all_versions=STABLE_ONLY, stable_versions=STABLE_ONLY)
     downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
-    _patch_failing_for(monkeypatch, tmp_path, failing={"8.8.8"})
+    _patch_failing_for(monkeypatch, tmp_path, failing={"8.8.8", "7.7.7"})
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
 
-    with pytest.raises(build.PatchFailed, match="downloaded-8.8.8.apk"):
+    with pytest.raises(build.PatchFailed, match="downloaded-7.7.7.apk"):
         await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert [download["version"] for download in downloads] == ["8.8.8"]
+    assert [download["version"] for download in downloads] == ["8.8.8", "7.7.7"]
 
 
 async def test_process_build_does_not_fall_back_for_a_pinned_version(monkeypatch, tmp_path):
@@ -1015,12 +1028,13 @@ async def test_process_build_does_not_fall_back_when_no_stable_version_is_listed
     build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
     _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions="Nothing useful here.\n")
     downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
-    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9", "8.8.8", "7.7.7"})
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
 
-    with pytest.raises(build.PatchFailed, match="downloaded-9.9.9.apk"):
+    with pytest.raises(build.PatchFailed, match="downloaded-7.7.7.apk"):
         await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert [download["version"] for download in downloads] == ["9.9.9"]
+    assert [download["version"] for download in downloads] == ["9.9.9", "8.8.8", "7.7.7"]
 
 
 async def test_process_build_does_not_fall_back_when_every_stable_version_was_already_tried(monkeypatch, tmp_path):
@@ -1043,15 +1057,15 @@ async def test_process_build_does_not_fall_back_when_every_stable_version_was_al
 async def test_process_build_gives_up_when_the_stable_version_cannot_be_patched_either(monkeypatch, tmp_path):
     apk_source = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
     build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
-    modes = _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
+    modes = _list_versions_by_mode(monkeypatch, all_versions=THREE_EXPERIMENTAL_FIRST, stable_versions=STABLE_ONLY)
     downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
-    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9", "8.8.8", "7.7.7"})
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9", "9.9.8", "9.9.7", "8.8.8", "7.7.7"})
     monkeypatch.setattr(build.log, "warn", lambda msg: None)
 
-    with pytest.raises(build.PatchFailed, match="downloaded-8.8.8.apk"):
+    with pytest.raises(build.PatchFailed, match="downloaded-7.7.7.apk"):
         await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert [download["version"] for download in downloads] == ["9.9.9", "8.8.8"]
+    assert [download["version"] for download in downloads] == ["9.9.9", "9.9.8", "9.9.7", "8.8.8", "7.7.7"]
     assert modes == [True, False]
 
 
@@ -1082,12 +1096,12 @@ async def test_process_build_reports_the_original_failure_when_the_stable_lookup
 
     monkeypatch.setattr(build, "list_versions", fake_list_versions)
     downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
-    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9", "8.8.8", "7.7.7"})
 
-    with pytest.raises(build.PatchFailed, match="downloaded-9.9.9.apk"):
+    with pytest.raises(build.PatchFailed, match="downloaded-7.7.7.apk"):
         await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert [download["version"] for download in downloads] == ["9.9.9"]
+    assert [download["version"] for download in downloads] == ["9.9.9", "8.8.8", "7.7.7"]
     assert any("java is missing" in line for line in warnings)
 
 
@@ -1098,12 +1112,13 @@ async def test_process_build_reports_the_original_failure_when_the_cli_lists_no_
     build_key = _common_mocks(monkeypatch, tmp_path, apk_source, force_version=None)
     _list_versions_by_mode(monkeypatch, all_versions=EXPERIMENTAL_FIRST, stable_versions=None)
     downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
-    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9", "8.8.8", "7.7.7"})
+    monkeypatch.setattr(build.log, "warn", lambda msg: None)
 
-    with pytest.raises(build.PatchFailed, match="downloaded-9.9.9.apk"):
+    with pytest.raises(build.PatchFailed, match="downloaded-7.7.7.apk"):
         await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
 
-    assert [download["version"] for download in downloads] == ["9.9.9"]
+    assert [download["version"] for download in downloads] == ["9.9.9", "8.8.8", "7.7.7"]
 
 
 async def test_process_build_hands_the_apk_type_of_the_build_to_the_apkmirror_fetcher(monkeypatch, tmp_path):
@@ -1699,3 +1714,729 @@ def test_write_status_leaves_timings_out_when_none_were_measured(monkeypatch, tm
 
     assert "timings" not in _status(tmp_path, "the-app")
     assert "timings" not in _status(tmp_path, "other-app")
+
+
+APKMIRROR = {"type": "apkmirror", "org": "acme-inc", "slug": "acme-app"}
+GITHUB = {"type": "github", "owner": "acme-inc", "repo": "acme-app"}
+
+
+async def test_a_patch_failure_steps_down_to_the_next_version_and_records_why(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9"})
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    with notes.collect() as sink:
+        result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "9.9.8"
+    assert [download["version"] for download in downloads] == ["9.9.9", "9.9.8"]
+    assert sink.attempts == [
+        {"version": "9.9.9", "stage": "patch", "reason": "Patch failed for downloaded-9.9.9.apk"}
+    ]
+    assert any("Patching 9.9.9 failed" in line and "Stepping down to 9.9.8" in line for line in warnings)
+
+
+async def test_every_version_that_failed_is_recorded_in_the_order_it_was_tried(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"9.9.9", "9.9.8"})
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink:
+        result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "9.9.7"
+    assert [(attempt["version"], attempt["stage"]) for attempt in sink.attempts] == [
+        ("9.9.9", "patch"),
+        ("9.9.8", "patch"),
+    ]
+
+
+async def test_a_build_that_cannot_be_patched_on_any_version_fails_with_every_attempt_recorded(
+    monkeypatch, tmp_path
+):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, THREE_STABLE_VERSIONS)
+    downloads = _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"8.8.8", "7.7.7", "6.6.6"})
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink, pytest.raises(build.PatchFailed, match="6.6.6"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [download["version"] for download in downloads] == ["8.8.8", "7.7.7", "6.6.6"]
+    assert [attempt["version"] for attempt in sink.attempts] == ["8.8.8", "7.7.7", "6.6.6"]
+    assert {attempt["stage"] for attempt in sink.attempts} == {"patch"}
+
+
+async def test_a_version_without_an_apkmirror_page_is_recorded_as_a_download_attempt(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, VERSIONS_WITH_CODES)
+    _apkmirror_without_pages_for(monkeypatch, tmp_path, missing={"9.9.9"})
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink:
+        result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "8.8.8"
+    assert sink.attempts == [
+        {"version": "9.9.9", "stage": "download", "reason": "No APKMirror release page found for version 9.9.9"}
+    ]
+
+
+async def test_the_last_version_without_a_page_is_recorded_too_when_the_build_fails(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, VERSIONS_WITH_CODES)
+    _apkmirror_without_pages_for(monkeypatch, tmp_path, missing={"9.9.9", "8.8.8"})
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink, pytest.raises(apkmirror.ReleaseNotFound):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert [(attempt["version"], attempt["stage"]) for attempt in sink.attempts] == [
+        ("9.9.9", "download"),
+        ("8.8.8", "download"),
+    ]
+
+
+async def test_a_github_build_tries_one_version_and_records_why_it_failed(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB, force_version=None)
+    _list_versions_returns(monkeypatch, STABLE_ONLY)
+    downloads = []
+
+    async def fake_download(version, app_slug, source):
+        downloads.append(version)
+        return str(tmp_path / f"downloaded-{version}.apk")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+    _patch_failing_for(monkeypatch, tmp_path, failing={"8.8.8"})
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink, pytest.raises(build.PatchFailed):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert downloads == ["8.8.8"]
+    assert [(attempt["version"], attempt["stage"]) for attempt in sink.attempts] == [("8.8.8", "patch")]
+
+
+async def test_a_build_that_worked_at_once_has_no_attempts_on_record(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, STABLE_ONLY)
+    _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+
+    with notes.collect() as sink:
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert sink.attempts == []
+    assert sink.forced is False
+
+
+async def test_the_patch_report_of_a_failed_attempt_does_not_leak_into_the_next_one(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    seen_at_start = []
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        current = notes.current()
+        seen_at_start.append(current.report if current is not None else "no notes")
+        if "9.9.9" in Path(apk).name:
+            notes.set_report({"applied": [], "failed": [{"name": "Hide ads", "error": "Class not found"}]})
+            raise build.PatchFailed("Patch failed (exit 1):\nERROR: something")
+        notes.set_report({"applied": ["Layout"], "failed": []})
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink:
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert seen_at_start == [None, None]
+    assert sink.report == {"applied": ["Layout"], "failed": []}
+
+
+async def test_the_reason_of_a_failed_attempt_is_taken_from_the_patch_report(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        if "9.9.9" in Path(apk).name:
+            notes.set_report({"applied": [], "failed": [{"name": "Hide ads", "error": "Class not found"}]})
+            raise build.PatchFailed("Patch failed (exit 1):\nERROR: something unrelated")
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink:
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert sink.attempts == [{"version": "9.9.9", "stage": "patch", "reason": "Hide ads: Class not found"}]
+
+
+async def test_every_patch_run_is_asked_for_its_own_result_file(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB, force_version=None)
+    seen = []
+
+    async def fake_download(version, app_slug, source):
+        return str(tmp_path / "downloaded.apk")
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        seen.append(kwargs)
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+
+    await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert seen[0]["result_file"] == tmp_path / "build" / "diagnostics" / f"patch-result-{build_key}.json"
+    assert seen[0]["force"] is False
+
+
+def _forcing(monkeypatch, build_key, **fields):
+    for name, value in {"force": True, **fields}.items():
+        monkeypatch.setitem(catalog.BUILDS[build_key], name, value)
+
+
+def _newest_apkmirror_version(monkeypatch, version):
+    async def fake_listing(app_slug, source):
+        if isinstance(version, Exception):
+            raise version
+        return {"version": version, "href": "https://www.apkmirror.com/apk/acme-inc/acme-app/"}
+
+    monkeypatch.setattr(apkmirror, "get_latest_listing", fake_listing)
+
+
+async def test_versions_are_not_forced_unless_the_build_asks_for_it(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+
+    choices = await build._select_versions(build_key, "cli.jar", ["b.mpp"])
+
+    assert [(choice.version, choice.force) for choice in choices] == [
+        ("9.9.9", False),
+        ("9.9.8", False),
+        ("9.9.7", False),
+    ]
+
+
+async def test_a_forced_build_starts_with_the_newest_version_and_forces_only_that_one(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _forcing(monkeypatch, build_key)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    _newest_apkmirror_version(monkeypatch, "10.0.0")
+
+    choices = await build._select_versions(build_key, "cli.jar", ["b.mpp"])
+
+    assert [(choice.version, choice.force) for choice in choices] == [
+        ("10.0.0", True),
+        ("9.9.9", False),
+        ("9.9.8", False),
+    ]
+
+
+async def test_a_newest_version_the_bundle_already_supports_is_not_forced(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _forcing(monkeypatch, build_key)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    _newest_apkmirror_version(monkeypatch, "9.9.9")
+
+    choices = await build._select_versions(build_key, "cli.jar", ["b.mpp"])
+
+    assert [(choice.version, choice.force) for choice in choices] == [
+        ("9.9.9", False),
+        ("9.9.8", False),
+        ("9.9.7", False),
+    ]
+
+
+async def test_a_forced_build_keeps_the_build_codes_of_the_versions_the_bundle_lists(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _forcing(monkeypatch, build_key)
+    _list_versions_returns(monkeypatch, VERSIONS_WITH_CODES)
+    _newest_apkmirror_version(monkeypatch, "10.0.0")
+
+    choices = await build._select_versions(build_key, "cli.jar", ["b.mpp"])
+
+    assert choices == [
+        build.VersionChoice("10.0.0", {}, True),
+        build.VersionChoice("9.9.9", {"ARM64_V8A": 990, "ARMEABI_V7A": 991}, False),
+        build.VersionChoice("8.8.8", {"ARM64_V8A": 880}, False),
+    ]
+
+
+async def test_a_forced_github_build_forces_its_latest_release(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB, force_version=None)
+    _forcing(monkeypatch, build_key)
+    _list_versions_returns(monkeypatch, STABLE_ONLY)
+
+    choices = await build._select_versions(build_key, "cli.jar", ["b.mpp"])
+
+    assert choices == [build.VersionChoice("latest", {}, True)]
+
+
+async def test_a_forced_build_goes_on_without_force_when_the_newest_version_is_unknown(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _forcing(monkeypatch, build_key)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    _newest_apkmirror_version(monkeypatch, RuntimeError("HTTP 503"))
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    choices = await build._select_versions(build_key, "cli.jar", ["b.mpp"])
+
+    assert [(choice.version, choice.force) for choice in choices] == [
+        ("9.9.9", False),
+        ("9.9.8", False),
+        ("9.9.7", False),
+    ]
+    assert any("HTTP 503" in line for line in warnings)
+    assert any("without --force" in line for line in warnings)
+
+
+async def test_a_forced_build_with_a_pinned_version_forces_that_version(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version="9.9.9")
+    _forcing(monkeypatch, build_key)
+    _list_versions_returns(monkeypatch, VERSIONS_WITH_CODES)
+
+    choices = await build._select_versions(build_key, "cli.jar", ["b.mpp"])
+
+    assert choices == [build.VersionChoice("9.9.9", {"ARM64_V8A": 990, "ARMEABI_V7A": 991}, True)]
+
+
+async def test_a_pinned_version_is_not_forced_when_the_build_does_not_ask_for_it(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version="9.9.9")
+    _list_versions_returns(monkeypatch, VERSIONS_WITH_CODES)
+
+    choices = await build._select_versions(build_key, "cli.jar", ["b.mpp"])
+
+    assert [choice.force for choice in choices] == [False]
+
+
+async def test_a_forced_version_is_patched_with_force_and_noted_as_forced(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _forcing(monkeypatch, build_key)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    _newest_apkmirror_version(monkeypatch, "10.0.0")
+    _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    forced = []
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        forced.append((Path(apk).name, kwargs["force"]))
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+
+    with notes.collect() as sink:
+        result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "10.0.0"
+    assert forced == [("downloaded-10.0.0.apk", True)]
+    assert sink.forced is True
+
+
+async def test_stepping_down_from_a_forced_version_goes_on_without_force(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, APKMIRROR, force_version=None)
+    _forcing(monkeypatch, build_key)
+    _list_versions_returns(monkeypatch, THREE_EXPERIMENTAL_FIRST)
+    _newest_apkmirror_version(monkeypatch, "10.0.0")
+    _versioned_apkmirror_downloads(monkeypatch, tmp_path)
+    forced = []
+
+    async def fake_patch(cli_jar, bundles, apk, **kwargs):
+        forced.append((Path(apk).name, kwargs["force"]))
+        if "10.0.0" in Path(apk).name:
+            raise build.PatchFailed("Patch failed for the newest version")
+        return str(tmp_path / "patched.apk")
+
+    monkeypatch.setattr(build, "patch_apk", fake_patch)
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink:
+        result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result["version"] == "9.9.9"
+    assert forced == [("downloaded-10.0.0.apk", True), ("downloaded-9.9.9.apk", False)]
+    assert sink.forced is False
+    assert [attempt["version"] for attempt in sink.attempts] == ["10.0.0"]
+
+
+async def test_nothing_is_checked_when_no_patch_names_are_configured(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+    calls = []
+
+    async def fake_names(cli_jar, bundles, pkg):
+        calls.append(pkg)
+        return ["Hide ads"]
+
+    monkeypatch.setattr(build, "list_patch_names", fake_names)
+
+    await build._check_patch_names(catalog.BUILDS[build_key], "cli.jar", ["b.mpp"])
+
+    assert calls == []
+
+
+async def test_a_patch_name_the_bundle_does_not_know_is_a_warning_with_a_suggestion(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+    _forcing(monkeypatch, build_key, force=False, exclude=["Hide adz"], enable=["Layout"])
+    calls = []
+
+    async def fake_names(cli_jar, bundles, pkg):
+        calls.append((str(cli_jar), [str(item) for item in bundles], pkg))
+        return ["Hide ads", "Layout"]
+
+    monkeypatch.setattr(build, "list_patch_names", fake_names)
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    with notes.collect() as sink:
+        await build._check_patch_names(catalog.BUILDS[build_key], "cli.jar", ["b.mpp"])
+
+    expected = (
+        'exclude: "Hide adz" is not a patch for com.example.the-app in some-source (did you mean "Hide ads"?); '
+        "the patcher ignores unknown names, so this setting has no effect."
+    )
+    assert calls == [("cli.jar", ["b.mpp"], "com.example.the-app")]
+    assert warnings == [expected]
+    assert sink.warnings == [expected]
+
+
+async def test_known_patch_names_cause_no_warning(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+    _forcing(monkeypatch, build_key, force=False, exclude=["hide ADS"])
+
+    async def fake_names(cli_jar, bundles, pkg):
+        return ["Hide ads"]
+
+    monkeypatch.setattr(build, "list_patch_names", fake_names)
+
+    with notes.collect() as sink:
+        await build._check_patch_names(catalog.BUILDS[build_key], "cli.jar", ["b.mpp"])
+
+    assert sink.warnings == []
+
+
+@pytest.mark.parametrize("known", [None, []])
+async def test_patch_names_are_not_judged_when_the_bundle_lists_none(monkeypatch, tmp_path, known):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+    _forcing(monkeypatch, build_key, force=False, exclude=["Anything"])
+
+    async def fake_names(cli_jar, bundles, pkg):
+        return known
+
+    monkeypatch.setattr(build, "list_patch_names", fake_names)
+
+    with notes.collect() as sink:
+        await build._check_patch_names(catalog.BUILDS[build_key], "cli.jar", ["b.mpp"])
+
+    assert sink.warnings == []
+
+
+async def test_a_crash_while_listing_patch_names_does_not_stop_the_build(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+    _forcing(monkeypatch, build_key, force=False, exclude=["Anything"])
+
+    async def crashing(cli_jar, bundles, pkg):
+        raise RuntimeError("java exploded")
+
+    monkeypatch.setattr(build, "list_patch_names", crashing)
+    warnings = []
+    monkeypatch.setattr(build.log, "warn", warnings.append)
+
+    with notes.collect() as sink:
+        await build._check_patch_names(catalog.BUILDS[build_key], "cli.jar", ["b.mpp"])
+
+    assert warnings == ["Could not check the patch names: java exploded"]
+    assert sink.warnings == []
+
+
+async def test_a_wrong_patch_name_does_not_fail_the_build_but_is_noted_for_the_status(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+    _forcing(monkeypatch, build_key, force=False, enable=["Hide adz"])
+
+    async def fake_names(cli_jar, bundles, pkg):
+        return ["Hide ads"]
+
+    async def fake_download(version, app_slug, source):
+        return str(tmp_path / "downloaded.apk")
+
+    monkeypatch.setattr(build, "list_patch_names", fake_names)
+    monkeypatch.setattr(github, "download_apk", fake_download)
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+
+    with notes.collect() as sink:
+        result = await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+    assert result is not None
+    assert any('enable: "Hide adz"' in line for line in sink.warnings)
+
+
+def _facts(**fields):
+    values = {
+        "package": "com.example.the-app",
+        "version_name": "1.2.3",
+        "version_code": 123,
+        "abis": frozenset({"arm64-v8a"}),
+        "has_dex": True,
+    }
+    return sanity.ApkFacts(**{**values, **fields})
+
+
+async def _build_with_facts(monkeypatch, tmp_path, *, original=None, patched=None):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+
+    async def fake_download(version, app_slug, source):
+        return str(tmp_path / "downloaded.apk")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+    monkeypatch.setattr(build.sanity, "inspect_quietly", lambda path: original)
+    monkeypatch.setattr(build.sanity, "inspect_apk", lambda path: patched or REAL_FACTS)
+    monkeypatch.setattr(build.log, "warn", lambda message: None)
+    return await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+
+async def test_the_facts_of_the_patched_apk_are_noted_for_the_status(monkeypatch, tmp_path):
+    with notes.collect() as sink:
+        await _build_with_facts(monkeypatch, tmp_path, patched=_facts(version_name="1.2.4", version_code=124))
+
+    assert sink.apk == {
+        "package": "com.example.the-app",
+        "version_name": "1.2.4",
+        "version_code": 124,
+        "abis": ["arm64-v8a"],
+    }
+    assert sink.warnings == []
+
+
+async def test_a_download_for_another_package_is_a_warning_and_the_build_goes_on(monkeypatch, tmp_path):
+    with notes.collect() as sink:
+        result = await _build_with_facts(monkeypatch, tmp_path, original=_facts(package="com.other.app"))
+
+    assert result is not None
+    assert sink.warnings == [
+        "The downloaded APK is com.other.app, but this build is configured for com.example.the-app."
+    ]
+
+
+async def test_a_download_that_cannot_be_inspected_causes_no_warning(monkeypatch, tmp_path):
+    with notes.collect() as sink:
+        await _build_with_facts(monkeypatch, tmp_path, original=None)
+
+    assert sink.warnings == []
+
+
+async def test_leftover_libraries_in_the_patched_apk_are_a_warning_and_the_build_goes_on(monkeypatch, tmp_path):
+    patched = _facts(abis=frozenset({"arm64-v8a", "x86"}))
+
+    with notes.collect() as sink:
+        result = await _build_with_facts(monkeypatch, tmp_path, original=_facts(), patched=patched)
+
+    assert result is not None
+    assert sink.warnings == ["The patched APK still holds native libraries for x86."]
+    assert sink.apk["abis"] == ["arm64-v8a", "x86"]
+
+
+async def test_a_patched_apk_without_code_fails_the_build(monkeypatch, tmp_path):
+    with pytest.raises(sanity.SanityError, match="no classes.dex"):
+        await _build_with_facts(monkeypatch, tmp_path, patched=_facts(has_dex=False))
+
+
+async def test_a_patched_apk_that_cannot_be_read_fails_the_build(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+
+    async def fake_download(version, app_slug, source):
+        return str(tmp_path / "downloaded.apk")
+
+    def unreadable(path):
+        raise sanity.SanityError("app.apk is not a readable APK")
+
+    monkeypatch.setattr(github, "download_apk", fake_download)
+    monkeypatch.setattr(build.sanity, "inspect_apk", unreadable)
+
+    with pytest.raises(sanity.SanityError, match="not a readable APK"):
+        await build.process_build(build_key, "desktop.jar", ["patch1.mpp"])
+
+
+def _all_details():
+    return notes.BuildNotes(
+        attempts=[{"version": "2.0", "stage": "patch", "reason": "Hide ads: boom"}],
+        report={"applied": ["Layout"], "failed": [{"name": "Hide ads", "error": "boom"}], "reason": "x"},
+        warnings=["careful"],
+        forced=True,
+        apk={"package": "com.example.the-app", "version_name": "1.9", "version_code": 19, "abis": ["arm64-v8a"]},
+    )
+
+
+def test_write_status_records_what_the_build_noted(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATCHY_BUILD_DIR", str(tmp_path / "build"))
+
+    build.write_status("the-app", version="1.9", file="The App-1.9.apk", details=_all_details())
+
+    status = _status(tmp_path, "the-app")
+    assert status["attempts"] == [{"version": "2.0", "stage": "patch", "reason": "Hide ads: boom"}]
+    assert status["patches"] == {"applied": ["Layout"], "failed": [{"name": "Hide ads", "error": "boom"}]}
+    assert status["warnings"] == ["careful"]
+    assert status["forced"] is True
+    assert status["apk"]["version_code"] == 19
+    assert status["ok"] is True and status["version"] == "1.9"
+
+
+@pytest.mark.parametrize("details", [None, notes.BuildNotes()])
+def test_write_status_leaves_out_what_there_is_nothing_to_say_about(monkeypatch, tmp_path, details):
+    monkeypatch.setenv("PATCHY_BUILD_DIR", str(tmp_path / "build"))
+
+    build.write_status("the-app", version="1", details=details)
+
+    assert set(_status(tmp_path, "the-app")) == {"build_key", "ok", "error", "version", "file", "pending_pin"}
+
+
+def test_write_status_keeps_a_report_without_patches_as_empty_lists(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATCHY_BUILD_DIR", str(tmp_path / "build"))
+
+    build.write_status("the-app", details=notes.BuildNotes(report={"applied": [], "failed": []}))
+
+    assert _status(tmp_path, "the-app")["patches"] == {"applied": [], "failed": []}
+
+
+async def test_run_builds_records_the_notes_of_a_successful_build(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        notes.attempt("2.0", "patch", "Hide ads: boom")
+        notes.set_report({"applied": ["Layout"], "failed": []})
+        notes.warn("careful")
+        notes.set_forced(True)
+        notes.set_apk({"package": "com.example.the-app"})
+        return {"name": "The App-1.9.apk", "version": "1.9"}
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+
+    assert await build.run_builds([build_key], _tools(tmp_path)) == []
+
+    status = _status(tmp_path, build_key)
+    assert status["ok"] is True
+    assert status["attempts"] == [{"version": "2.0", "stage": "patch", "reason": "Hide ads: boom"}]
+    assert status["patches"]["applied"] == ["Layout"]
+    assert status["warnings"] == ["careful"]
+    assert status["forced"] is True
+    assert status["apk"] == {"package": "com.example.the-app"}
+
+
+async def test_run_builds_gives_a_failed_patch_build_the_reason_from_its_report(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        notes.attempt("2.0", "patch", "Hide ads: Class not found")
+        notes.set_report({"applied": ["Layout"], "failed": [{"name": "Hide ads", "error": "Class not found"}]})
+        raise build.PatchFailed("Patch failed (exit 1):\nERROR: something unrelated")
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+    monkeypatch.setattr(build.log, "error", lambda message: None)
+
+    assert await build.run_builds([build_key], _tools(tmp_path)) == [build_key]
+
+    status = _status(tmp_path, build_key)
+    assert status["ok"] is False
+    assert status["error"] == "Hide ads: Class not found"
+    assert status["patches"]["failed"] == [{"name": "Hide ads", "error": "Class not found"}]
+    assert status["attempts"] == [{"version": "2.0", "stage": "patch", "reason": "Hide ads: Class not found"}]
+
+
+async def test_run_builds_records_the_notes_of_a_build_that_crashed_with_another_error(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        notes.warn("careful")
+        raise RuntimeError("HTTP 500")
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+    monkeypatch.setattr(build.log, "error", lambda message: None)
+
+    await build.run_builds([build_key], _tools(tmp_path))
+
+    status = _status(tmp_path, build_key)
+    assert status["error"] == "HTTP 500"
+    assert status["warnings"] == ["careful"]
+    assert "patches" not in status
+
+
+async def test_run_builds_records_the_notes_of_a_build_with_an_unpinned_signature(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        notes.warn("careful")
+        raise UnpinnedSignature("the-app", FINGERPRINT)
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+    monkeypatch.setattr(build.log, "error", lambda message: None)
+
+    await build.run_builds([build_key], _tools(tmp_path))
+
+    assert _status(tmp_path, build_key)["warnings"] == ["careful"]
+
+
+async def test_run_builds_records_the_notes_of_a_build_without_output(monkeypatch, tmp_path):
+    build_key = _common_mocks(monkeypatch, tmp_path, GITHUB)
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        notes.warn("careful")
+        return None
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+
+    await build.run_builds([build_key], _tools(tmp_path))
+
+    assert _status(tmp_path, build_key)["warnings"] == ["careful"]
+
+
+async def test_run_builds_keeps_the_notes_of_every_build_apart(monkeypatch, tmp_path):
+    _common_mocks(monkeypatch, tmp_path, GITHUB)
+    monkeypatch.setattr(
+        catalog,
+        "BUILDS",
+        {"one": _fake_build("one", GITHUB), "two": _fake_build("two", GITHUB)},
+    )
+
+    async def fake_process(key, cli_jar, bundle_paths):
+        notes.warn(f"note of {key}")
+        if key == "one":
+            notes.attempt("1.0", "patch", "boom")
+        return {"name": f"{key}.apk", "version": "1"}
+
+    monkeypatch.setattr(build, "process_build", fake_process)
+
+    await build.run_builds(["one", "two"], _tools(tmp_path))
+
+    assert _status(tmp_path, "one")["warnings"] == ["note of one"]
+    assert _status(tmp_path, "one")["attempts"] == [{"version": "1.0", "stage": "patch", "reason": "boom"}]
+    assert _status(tmp_path, "two")["warnings"] == ["note of two"]
+    assert "attempts" not in _status(tmp_path, "two")
+
+
+def test_the_failure_text_of_a_patch_failure_comes_from_the_report():
+    details = notes.BuildNotes(report={"applied": [], "failed": [{"name": "Hide ads", "error": "boom"}]})
+
+    assert (
+        build._failure_text(build.PatchFailed("Patch failed (exit 1):\nERROR: other"), details) == "Hide ads: boom"
+    )
+
+
+def test_the_failure_text_of_a_patch_failure_without_a_report_comes_from_its_message():
+    details = notes.BuildNotes()
+
+    assert build._failure_text(build.PatchFailed("Patch failed (exit 1):\nERROR: FAILED: Hide ads"), details) == (
+        "FAILED: Hide ads"
+    )
+
+
+def test_the_failure_text_of_any_other_error_is_its_message():
+    details = notes.BuildNotes(report={"applied": [], "failed": [{"name": "Hide ads", "error": "boom"}]})
+
+    assert build._failure_text(RuntimeError("HTTP 500"), details) == "HTTP 500"

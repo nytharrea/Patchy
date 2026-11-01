@@ -6,7 +6,7 @@ from patchy import catalog, cli
 from patchy.core import toolchain
 from patchy.engine import build as build_module
 from patchy.engine import pins
-from patchy.fetch import apkmirror, bundles
+from patchy.fetch import apkmirror, bundles, morphe
 
 A = "a" * 64
 
@@ -22,6 +22,7 @@ def test_every_subcommand_is_registered():
         "publish",
         "summary",
         "pin",
+        "discover",
         "toolchain",
     ):
         args = parser.parse_args([command]) if command != "pin" else parser.parse_args([command, "youtube"])
@@ -201,16 +202,44 @@ def test_build_falls_back_to_the_target_app_environment_setting(monkeypatch):
 
 
 def test_fetch_downloads_only_what_the_selected_builds_need(monkeypatch):
+    from patchy.publish import incremental
+
     seen = []
+    recorded = []
 
     async def fake_fetch_all(builds):
         seen.append(list(builds))
         return {"builds": builds, "cli": {}, "bundles": {"morphe": {}}}
 
+    async def fake_record(manifest):
+        recorded.append(manifest)
+        return manifest
+
     monkeypatch.setattr(bundles, "fetch_all", fake_fetch_all)
+    monkeypatch.setattr(incremental, "record_fingerprints", fake_record)
 
     assert cli.main(["fetch", "--builds", "youtube"]) == 0
     assert seen == [["youtube"]]
+    assert recorded == [{"builds": ["youtube"], "cli": {}, "bundles": {"morphe": {}}}]
+
+
+def test_fetch_still_succeeds_when_the_fingerprints_cannot_be_recorded(monkeypatch):
+    from patchy.publish import incremental
+
+    warnings = []
+
+    async def fake_fetch_all(builds):
+        return {"builds": builds, "cli": {}, "bundles": {}}
+
+    async def failing(manifest):
+        raise RuntimeError("GitHub API error: 403")
+
+    monkeypatch.setattr(bundles, "fetch_all", fake_fetch_all)
+    monkeypatch.setattr(incremental, "record_fingerprints", failing)
+    monkeypatch.setattr(cli.log, "warn", warnings.append)
+
+    assert cli.main(["fetch", "--builds", "youtube"]) == 0
+    assert any("403" in line and "only-changed" in line for line in warnings)
 
 
 def test_fetch_rejects_unknown_build_keys(monkeypatch):
@@ -302,3 +331,129 @@ def test_summary_with_nothing_to_report_still_succeeds(monkeypatch, tmp_path):
 
     assert cli.main(["summary"]) == 0
     assert not target.exists()
+
+
+def _morphe_catalog():
+    return morphe.parse_catalog(
+        {
+            "store": {"com.example.newapp": {"name": "New App", "category": "Social"}},
+            "bundles": [
+                {
+                    "name": "Fancy",
+                    "repo": "fancy/newapp-patches",
+                    "source": "github",
+                    "targetApps": ["com.example.newapp"],
+                }
+            ],
+        }
+    )
+
+
+def _serve_catalog(monkeypatch, result=None, error=None):
+    async def fake_fetch_catalog(url=None):
+        if error is not None:
+            raise error
+        return result or _morphe_catalog()
+
+    monkeypatch.setattr(morphe, "fetch_catalog", fake_fetch_catalog)
+
+
+def test_discover_writes_the_report_to_the_github_job_summary(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(target))
+    _serve_catalog(monkeypatch)
+
+    assert cli.main(["discover", "--package", "com.example.newapp"]) == 0
+
+    report = target.read_text(encoding="utf-8")
+    assert report.startswith("## Morphe catalog: `com.example.newapp`")
+    assert "Patchy does not build it yet." in report
+    assert "## Morphe catalog" not in capsys.readouterr().out
+
+
+def test_discover_prints_the_report_when_there_is_no_job_summary_file(monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    _serve_catalog(monkeypatch)
+
+    assert cli.main(["discover", "--query", "new"]) == 0
+
+    assert "## Morphe catalog search: `new`" in capsys.readouterr().out
+
+
+def test_discover_without_arguments_gives_the_overview(monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    for name in ("DISCOVER_PACKAGE", "DISCOVER_QUERY", "DISCOVER_LIMIT"):
+        monkeypatch.delenv(name, raising=False)
+    _serve_catalog(monkeypatch)
+
+    assert cli.main(["discover"]) == 0
+
+    assert "## Morphe catalog overview" in capsys.readouterr().out
+
+
+def test_discover_fails_when_the_catalog_cannot_be_loaded(monkeypatch, tmp_path):
+    target = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(target))
+    errors = []
+    monkeypatch.setattr(cli.log, "error", errors.append)
+    _serve_catalog(monkeypatch, error=morphe.MorpheCatalogError("Could not load the Morphe catalog: HTTP 503"))
+
+    assert cli.main(["discover"]) == 1
+
+    assert errors == ["Could not load the Morphe catalog: HTTP 503"]
+    assert not target.exists()
+
+
+def test_discover_hands_what_was_asked_for_to_the_report(monkeypatch):
+    from patchy.catalog import discover
+
+    seen = []
+
+    def fake_report(catalog, **kwargs):
+        seen.append(kwargs)
+        return "report"
+
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    for name in ("DISCOVER_PACKAGE", "DISCOVER_QUERY", "DISCOVER_LIMIT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(discover, "build_report", fake_report)
+    _serve_catalog(monkeypatch)
+
+    assert cli.main(["discover", "--query", "reddit", "--limit", "5"]) == 0
+    assert cli.main(["discover", "--package", "com.reddit.frontpage"]) == 0
+
+    assert seen == [
+        {"package": "", "query": "reddit", "limit": 5},
+        {"package": "com.reddit.frontpage", "query": "", "limit": 20},
+    ]
+
+
+def test_discover_takes_its_defaults_from_the_environment(monkeypatch):
+    monkeypatch.setenv("DISCOVER_PACKAGE", "com.example.app")
+    monkeypatch.setenv("DISCOVER_QUERY", "example")
+    monkeypatch.setenv("DISCOVER_LIMIT", "7")
+
+    args = cli.build_parser().parse_args(["discover"])
+
+    assert (args.package, args.query, args.limit) == ("com.example.app", "example", 7)
+
+
+def test_discover_treats_empty_environment_values_as_not_given(monkeypatch):
+    monkeypatch.setenv("DISCOVER_PACKAGE", "")
+    monkeypatch.setenv("DISCOVER_QUERY", "")
+    monkeypatch.setenv("DISCOVER_LIMIT", "")
+
+    args = cli.build_parser().parse_args(["discover"])
+
+    assert (args.package, args.query, args.limit) == ("", "", 20)
+
+
+@pytest.mark.parametrize("limit", ["0", "-3", "many", "2.5"])
+def test_discover_rejects_a_limit_that_is_not_a_positive_whole_number(limit, monkeypatch):
+    for name in ("DISCOVER_PACKAGE", "DISCOVER_QUERY", "DISCOVER_LIMIT"):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.build_parser().parse_args(["discover", "--limit", limit])
+
+    assert exc_info.value.code == 2

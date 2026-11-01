@@ -53,6 +53,8 @@ Several rows patch the same app from a different bundle (for example `tiktok` an
 
 ## Adding a new app
 
+If you do not know yet which patch bundle covers the app, start with the **Discover** workflow: it reports the bundles that patch a package, with YAML to paste, see [`discover.yml`](workflows.md#discoveryml).
+
 1. Create `config/apps/<slug>.yaml` with the app's `pkg`, `display_name`, `arch`, `icon`, an `apk_source` and at least one build. See [Configuration](configuration.md) for every field.
 2. If the app uses a patch bundle that is not in `config/bundles.yaml` yet, add it there (`owner`, `repo`, `label`).
 3. Run `patchy validate` to catch mistakes such as an unknown bundle key or `exclude` written as a string instead of a list. CI runs it too.

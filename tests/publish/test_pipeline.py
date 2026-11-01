@@ -271,8 +271,17 @@ class _Recorder:
         self.companions = None
         self.upload_calls = 0
         self.deleted_keep = None
+        self.deleted_retention = None
         self.notifications = []
         self.delete_error = None
+        self.previous = None
+        self.previous_error = None
+        self.previous_state = None
+        self.lookups = []
+        self.downloaded = []
+        self.download_errors = {}
+        self.state_uploads = []
+        self.state_error = None
 
 
 def _manifest(builds):
@@ -300,10 +309,33 @@ def _wire_publish(monkeypatch, recorder, manifest):
         recorder.uploaded = list(paths)
         recorder.companions = [c["key"] for c in companions]
 
-    async def fake_delete(keep_id):
+    async def fake_delete(keep_id, keep=0):
         recorder.deleted_keep = keep_id
+        recorder.deleted_retention = keep
         if recorder.delete_error:
             raise recorder.delete_error
+
+    async def fake_previous(exclude_tag=""):
+        recorder.lookups.append(exclude_tag)
+        if recorder.previous_error:
+            raise recorder.previous_error
+        return recorder.previous
+
+    async def fake_download(asset, destination):
+        if asset["name"] in recorder.download_errors:
+            raise recorder.download_errors[asset["name"]]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"carried " + asset["name"].encode())
+        recorder.downloaded.append(asset["name"])
+        return destination
+
+    async def fake_state(release):
+        return recorder.previous_state
+
+    async def fake_upload_state(rel, path):
+        if recorder.state_error:
+            raise recorder.state_error
+        recorder.state_uploads.append(json.loads(Path(path).read_text()))
 
     async def fake_notify(text):
         recorder.notifications.append(text)
@@ -311,6 +343,10 @@ def _wire_publish(monkeypatch, recorder, manifest):
     monkeypatch.setattr(pipeline, "create_new_release", fake_create)
     monkeypatch.setattr(pipeline, "upload_assets", fake_upload)
     monkeypatch.setattr(pipeline, "delete_other_releases", fake_delete)
+    monkeypatch.setattr(pipeline, "previous_release", fake_previous)
+    monkeypatch.setattr(pipeline, "download_asset", fake_download)
+    monkeypatch.setattr(pipeline, "read_release_state", fake_state)
+    monkeypatch.setattr(pipeline, "upload_with_replace", fake_upload_state)
     monkeypatch.setattr(pipeline.notify, "notify", fake_notify)
 
 
@@ -529,3 +565,217 @@ def test_a_missing_manifest_is_survivable(monkeypatch):
 
     assert pipeline._load_manifest() is None
     assert any("manifest not found" in w for w in warnings)
+
+
+PREVIOUS_TAG = "build-2026-10-03T10-00-00"
+
+
+def _previous_release(*names):
+    return {
+        "id": 7,
+        "tag_name": PREVIOUS_TAG,
+        "assets": [{"name": name, "url": f"https://api.github.com/assets/{name}", "size": 5} for name in names],
+    }
+
+
+def _status(root, key, **payload):
+    directory = root / "artifacts" / f"apk-{key}"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"status-{key}.json").write_text(json.dumps({"build_key": key, **payload}))
+
+
+async def test_run_publish_carries_over_the_apps_that_were_not_built(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    recorder.previous = _previous_release(
+        "Gboard-2.0.apk", "YouTube-18.0.apk", "MicroG.apk", "Proton.VPN-4.1.apk", "patchy-state.json"
+    )
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube", "gboard"]))
+    _signed(root, "YouTube-19.1.apk")
+    _status(root, "gboard", ok=False, error="HTTP 500 fetching listing page")
+
+    assert await pipeline.run_publish() is True
+
+    assert recorder.lookups == ["build-2026-10-04T10-00-00"]
+    assert sorted(recorder.downloaded) == ["Gboard-2.0.apk", "Proton.VPN-4.1.apk"]
+    assert sorted(Path(p).name for p in recorder.uploaded) == [
+        "Gboard-2.0.apk",
+        "Proton.VPN-4.1.apk",
+        "YouTube-19.1.apk",
+    ]
+    assert "Carried over from `build-2026-10-03T10-00-00`" in recorder.release_args[2]
+    assert "The new build failed: `HTTP 500 fetching listing page`" in recorder.release_args[2]
+    summary = recorder.notifications[0]
+    assert "1 app(s) patched" in summary
+    assert "2 app(s) carried over from the previous release" in summary
+    assert "Gboard — 2.0" in summary
+    assert "gboard — HTTP 500 fetching listing page — previous build kept" in summary
+
+
+async def test_carried_apps_bring_their_companion_apps_along(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    recorder.previous = _previous_release("YouTube-18.0.apk")
+    _wire_publish(monkeypatch, recorder, _manifest(["gboard"]))
+    _signed(root, "Gboard-2.0.apk")
+
+    await pipeline.run_publish()
+
+    assert sorted(recorder.companions) == ["microg", "pothelper"]
+
+
+async def test_the_carry_over_can_be_switched_off(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    recorder.previous = _previous_release("Gboard-2.0.apk")
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    monkeypatch.setattr(pipeline.settings, "carry_forward", False)
+    _signed(root, "YouTube-19.1.apk")
+
+    await pipeline.run_publish()
+
+    assert recorder.lookups == []
+    assert recorder.downloaded == []
+    assert [Path(p).name for p in recorder.uploaded] == ["YouTube-19.1.apk"]
+    assert list(recorder.state_uploads[0]["builds"]) == ["youtube"]
+
+
+async def test_a_carried_apk_that_cannot_be_downloaded_is_skipped_with_a_warning(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    recorder.previous = _previous_release("Gboard-2.0.apk", "Brave-1.0.apk")
+    recorder.download_errors["Gboard-2.0.apk"] = RuntimeError("HTTP 502")
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    warnings = []
+    monkeypatch.setattr(pipeline.log, "warn", warnings.append)
+    _signed(root, "YouTube-19.1.apk")
+
+    assert await pipeline.run_publish() is True
+
+    assert sorted(Path(p).name for p in recorder.uploaded) == ["Brave-1.0.apk", "YouTube-19.1.apk"]
+    assert any("Could not carry Gboard-2.0.apk" in w and "HTTP 502" in w for w in warnings)
+
+
+async def test_a_failing_previous_release_lookup_does_not_stop_publishing(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    recorder.previous_error = RuntimeError("API down")
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    warnings = []
+    monkeypatch.setattr(pipeline.log, "warn", warnings.append)
+    _signed(root, "YouTube-19.1.apk")
+
+    assert await pipeline.run_publish() is True
+
+    assert [Path(p).name for p in recorder.uploaded] == ["YouTube-19.1.apk"]
+    assert any("API down" in w for w in warnings)
+
+
+async def test_the_state_file_records_what_was_built_and_what_was_carried(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    recorder.previous = _previous_release("Gboard-2.0.apk", "patchy-state.json")
+    recorder.previous_state = {
+        "version": 1,
+        "release_tag": PREVIOUS_TAG,
+        "builds": {"gboard": {"version": "2.0", "file": "Gboard-2.0.apk", "fingerprint": "kept"}},
+    }
+    manifest = _manifest(["youtube", "gboard"])
+    manifest["fingerprints"] = {"youtube": "fresh", "gboard": "ignored"}
+    _wire_publish(monkeypatch, recorder, manifest)
+    _signed(root, "YouTube-19.1.apk")
+    _status(
+        root, "youtube", ok=True, version="19.1", attempts=[{"version": "19.2", "stage": "patch", "reason": "x"}]
+    )
+
+    await pipeline.run_publish()
+
+    assert recorder.state_uploads == [
+        {
+            "version": 1,
+            "release_tag": "build-2026-10-04T10-00-00",
+            "builds": {
+                "gboard": {"version": "2.0", "file": "Gboard-2.0.apk", "fingerprint": "kept"},
+                "youtube": {"version": "19.1", "file": "YouTube-19.1.apk", "fingerprint": "fresh", "retry": True},
+            },
+        }
+    ]
+
+
+async def test_a_state_that_cannot_be_uploaded_only_warns(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    recorder.state_error = RuntimeError("upload refused")
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    warnings = []
+    monkeypatch.setattr(pipeline.log, "warn", warnings.append)
+    _signed(root, "YouTube-19.1.apk")
+
+    assert await pipeline.run_publish() is True
+
+    assert any("patchy-state.json" in w and "upload refused" in w for w in warnings)
+    assert recorder.deleted_keep == 42
+    assert len(recorder.notifications) == 1
+
+
+async def test_old_releases_are_deleted_with_the_configured_retention(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    _signed(root, "YouTube-19.1.apk")
+
+    await pipeline.run_publish()
+    assert recorder.deleted_retention == pipeline.settings.keep_releases == 1
+
+    monkeypatch.setattr(pipeline.settings, "keep_releases", 4)
+    await pipeline.run_publish()
+    assert recorder.deleted_retention == 4
+
+
+async def test_the_release_notes_and_the_notification_show_what_was_patched(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    _signed(root, "YouTube-19.1.apk")
+    _status(
+        root,
+        "youtube",
+        ok=True,
+        version="19.1",
+        patches={"applied": ["Hide ads", "Video ads"], "failed": []},
+        attempts=[{"version": "19.2", "stage": "patch", "reason": "Hide ads: boom"}],
+        warnings=["The patched APK still holds native libraries for x86."],
+        forced=True,
+    )
+
+    await pipeline.run_publish()
+
+    body = recorder.release_args[2]
+    assert "YouTube - 2 patches applied" in body
+    assert "`Hide ads`, `Video ads`" in body
+    assert "Newer versions could not be used: `19.2` (patch: `Hide ads: boom`)" in body
+    assert "Patched with `--force`" in body
+    assert "native libraries for x86" in body
+    summary = recorder.notifications[0]
+    assert "YouTube — 19.1 (2 patch(es); newer not usable: 19.2; forced; 1 warning(s))" in summary
+
+
+async def test_a_run_without_any_new_apk_still_reports_the_attempts(monkeypatch, tmp_path):
+    root = _build_dir(monkeypatch, tmp_path)
+    recorder = _Recorder()
+    _wire_publish(monkeypatch, recorder, _manifest(["youtube"]))
+    _status(
+        root,
+        "youtube",
+        ok=False,
+        error="Hide ads: boom",
+        attempts=[
+            {"version": "19.2", "stage": "patch", "reason": "x"},
+            {"version": "19.1", "stage": "patch", "reason": "y"},
+        ],
+    )
+
+    assert await pipeline.run_publish() is False
+
+    assert "youtube — Hide ads: boom (tried 19.2, 19.1)" in recorder.notifications[0]
+    assert recorder.lookups == []

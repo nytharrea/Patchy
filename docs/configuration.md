@@ -70,8 +70,17 @@ For `github`, `tag_template` turns the version the patch bundle supports into th
 | `options` | no | Mapping of `"Patch name.optionKey"` to a value, passed as `-O` options |
 | `force_version` | no | Skip version discovery and fetch exactly this version, even when its release page is missing. The bundle's build codes for it are still looked up |
 | `force_build` | no | Only consider APKMirror rows whose text contains this value, such as a build code or a density. Rarely needed, see [How the APKMirror variant is chosen](#how-the-apkmirror-variant-is-chosen) |
+| `force` | no | `true` passes `--force` to the patcher, so it patches a version the patch bundles do not list. Read from the build only, never inherited from the app, see [Forced patching](#forced-patching) |
 
 When several builds of one app share a display name, the release file name gets a suffix taken from the first bundle's repository owner (or the build key when that is not unique).
+
+### Patch names are checked
+
+`exclude`, `enable` and the part of an `options` key before the dot must name patches of the build's bundles. The patcher ignores a name it does not know, so a typo changes nothing and no error shows it. Before it downloads the app, Patchy asks the patcher for the patches of the build's package (`list-patches --filter-package-name`) and warns about every name that is not among them, with the closest real name when there is one:
+
+`enable: "Clon app" is not a patch for com.reddit.frontpage in morphe (did you mean "Clone app"?); the patcher ignores unknown names, so this setting has no effect.`
+
+The comparison ignores case, as the patcher does. The build goes on, and the warning appears in the release notes, the job log and `status-<key>.json`. When the list of patches cannot be read, the check is skipped and the log says so.
 
 ### App name
 
@@ -89,11 +98,38 @@ The build log shows what was done, for example `App name of <application> change
 
 ### How the version is chosen
 
-Patchy asks the patcher (`list-versions`) which versions the selected bundles support, ranks them by the number of patches that apply and then by version number, and downloads the first. A bundle can support a version before APKMirror lists it, or APKMirror can list it only as another kind of build (an F-Droid build, for example). When there is no release page for the chosen version, Patchy moves on to the next supported one, three at the most, and the log names the version it moved to. A version pinned with `force_version` is never replaced. When the bundles list no version at all, the newest release on APKMirror is used.
+Patchy asks the patcher (`list-versions`) which versions the selected bundles support, ranks them by the number of patches that apply and then by version number, and downloads the first. A bundle can support a version before APKMirror lists it, or APKMirror can list it only as another kind of build (an F-Droid build, for example). When there is no release page for the chosen version, Patchy moves on to the next supported one, three at the most, and the log names the version it moved to. A version pinned with `force_version` is never replaced. A version that downloads but cannot be patched is replaced the same way, see [Stepping down to an older version](#stepping-down-to-an-older-version). When the bundles list no version at all, the newest release on APKMirror is used.
 
 The list includes experimental versions, the ones a bundle supports but marks as not fully tested (`list-versions --include-experimental`). This is on for every app and is not a setting: the patcher accepts such a version when it is asked to patch, so the newest version a bundle can patch at all is the one that gets built. A newer experimental version can still fail, because a patch finds nothing to match in it or because APKMirror has no release for it yet. When the build then stops while patching, or none of the versions Patchy tried has a release page, Patchy asks `list-versions` once more without experimental versions and builds the newest stable version it has not tried yet. The log says `The patch bundle lists <versions> as experimental, and building it failed. Falling back to <version>, the newest stable version it supports.` The fallback happens at most once per build, never replaces a version pinned with `force_version`, and does not happen when the version that failed was a stable one.
 
 Some bundles list a version together with its release channel, for example `348.10 - Stable` for Discord. Patchy turns that text into the lowercase, dash-separated form APKMirror uses in release addresses (`discord-talk-play-hang-out-348-10-stable-release`) and writes it into the release file name without spaces (`Discord-348.10-Stable.apk`). `force_version` takes the text exactly as the patcher prints it.
+
+### Stepping down to an older version
+
+The versions Patchy ranked are candidates in order, three at the most for an APKMirror source and one for a `github` source. When patching a version fails for good, which is after the retries described in this page (a second attempt with fewer bundles, and a build code the patcher accepts), the build goes on with the next candidate instead of ending. The next version is downloaded, checked against the pinned certificate and patched. A version that cannot be downloaded is skipped in the same way.
+
+Every version that was given up is recorded with the stage it failed at (`download` or `patch`) and the reason. The release notes of the app say `Newer versions could not be used: 20.2.1 (patch: ...)`, the notification adds `newer not usable`, and `status-<key>.json` keeps the list under `attempts`. The log line is `Stepping down to <version>, the next version the patch bundle supports.` When the candidates are used up, the fallback to a stable version described above still applies, and then the build fails with the reason of the last attempt. A version pinned with `force_version` has no other candidate, so it never steps down.
+
+An app that had to step down is built again by the next only-changed run, because a newer bundle release may fix the newer version, see [Only-changed runs](workflows.md#only-changed-runs).
+
+### Forced patching
+
+By default the patcher refuses an app version that none of the selected patches lists as compatible, and the build ends with `Applying 0 patches`. `force: true` on a build passes `--force` to the patcher, which then applies the patches without checking the version against them. It is meant for a version that is newer than what the bundle lists but changed so little that the patches still match. When they do not, the patch fails like in any other build.
+
+```yaml
+builds:
+  - key: "youtube"
+    bundles: ["morphe"]
+    force: true
+```
+
+How the version is chosen with `force: true`:
+
+- Without `force_version`, Patchy looks up the newest version first: the newest release on APKMirror, or the latest release of a `github` source, for which only that release is tried. `--force` is passed only when the bundles do not list that version; a version they do list is patched normally. The versions the bundles support follow as candidates and are never forced, so a build that cannot patch the newest version steps down to a listed one.
+- With `force_version`, that version is patched with `--force`.
+- When the newest version cannot be determined, the build runs without `--force` and the log says so.
+
+A forced build is marked in `status-<key>.json` (`forced`), in the release notes (`Patched with --force, so the patches were not checked against this version.`) and in the notification. The setting is read from the build only and never inherited from the app, so forcing one build cannot change another. Because the result depends on a version that no bundle has declared, an APKMirror build with `force: true` is built on every only-changed run, see [Only-changed runs](workflows.md#only-changed-runs).
 
 ### How the APKMirror variant is chosen
 
@@ -151,3 +187,12 @@ microg:
 ```
 
 A companion is uploaded to the release whenever any build listed in `for_builds` was published. Each variant picks the release asset ending with `suffix` (and not containing `exclude`, case-insensitively) and uploads it under the name `file`. Companions are third-party APKs published as they are; Patchy does not re-sign them.
+
+## Repository variables
+
+Two optional repository variables (Settings → Secrets and variables → Actions → Variables) change what `patchy publish` does after a run. Without them the defaults apply.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `KEEP_RELEASES` | `1` | How many older Patchy releases are kept next to the new one, see [Release retention](workflows.md#release-retention) |
+| `CARRY_FORWARD` | `true` | `false` publishes only the apps a run built instead of copying the others from the previous release, see [Carried-over apps](workflows.md#carried-over-apps) |

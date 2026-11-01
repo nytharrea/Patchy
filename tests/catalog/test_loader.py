@@ -248,6 +248,28 @@ def test_force_version_and_force_build_default_to_none(monkeypatch, tmp_path):
     assert builds["example"]["force_build"] is None
 
 
+def test_force_is_off_unless_a_build_turns_it_on(monkeypatch, tmp_path):
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": _minimal_app()})
+    assert builds["example"]["force"] is False
+
+
+def test_a_build_can_turn_force_on(monkeypatch, tmp_path):
+    app = _minimal_app(
+        builds=[
+            {"key": "example", "bundles": ["morphe"], "force": True},
+            {"key": "example-plain", "bundles": ["morphe"]},
+        ]
+    )
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": app})
+    assert builds["example"]["force"] is True
+    assert builds["example-plain"]["force"] is False
+
+
+def test_force_set_on_the_app_does_not_force_its_builds(monkeypatch, tmp_path):
+    _, builds = _load(monkeypatch, tmp_path, {"myapp": _minimal_app(force=True)})
+    assert builds["example"]["force"] is False
+
+
 def test_apk_type_defaults_to_none_when_absent(monkeypatch, tmp_path):
     _, builds = _load(monkeypatch, tmp_path, {"myapp": _minimal_app()})
     assert builds["example"]["apk_type"] is None

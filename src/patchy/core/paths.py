@@ -71,3 +71,11 @@ def signed_dir() -> Path:
 
 def diagnostics_dir() -> Path:
     return build_dir() / "diagnostics"
+
+
+def carried_dir() -> Path:
+    return build_dir() / "carried"
+
+
+def state_dir() -> Path:
+    return build_dir() / "state"

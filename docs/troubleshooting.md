@@ -26,7 +26,30 @@ APKMirror kept challenging every attempt and FlareSolverr could not clear it. Th
 
 ## `Applying 0 patches`
 
-No patch in the selected bundles is compatible with the downloaded version. Pin a compatible version with `force_version` in the build, or wait for the bundle to support the new release. The `Executing command` line of the build log lists the bundle files that were passed to the patcher, and the tag of each bundle is in the plan job's log and in `bundles.json`.
+No patch in the selected bundles is compatible with the downloaded version. Patchy then steps down to the next version the bundles support (three at the most), and the build fails with this message only when every candidate failed, see [Stepping down to an older version](configuration.md#stepping-down-to-an-older-version). To patch a version the bundles do not list, set `force: true` for the build, see [Forced patching](configuration.md#forced-patching); to stay on one version, pin it with `force_version`; or wait for the bundle to support the new release. The `Executing command` line of the build log lists the bundle files that were passed to the patcher, and the tag of each bundle is in the plan job's log and in `bundles.json`.
+
+## `Newer versions could not be used` in the release notes
+
+Not an error. The release carries an older version of the app than the newest one the patch bundles support, because the newer one failed: it could not be downloaded, or the patcher could not patch it. The line names every version Patchy gave up with the stage (`download` or `patch`) and the reason, for example `20.2.1 (patch: Hide ads: Failed to match the fingerprint)`. The notification says `newer not usable`, and `status-<key>.json` keeps the same list under `attempts`. The next only-changed run builds the app again, because a newer bundle release may fix it. To stay on one version for good, pin it with `force_version`; to try the newer one anyway, see [Forced patching](configuration.md#forced-patching). See also [Stepping down to an older version](configuration.md#stepping-down-to-an-older-version).
+
+## `Patched with --force, so the patches were not checked against this version`
+
+The build has `force: true` and the version it patched is one the patch bundles do not list, so the patcher skipped its compatibility check. The APK is published, but test it before you rely on it. Remove `force: true` from the build to go back to the versions the bundles support. See [Forced patching](configuration.md#forced-patching).
+
+## Warnings in the release notes
+
+The build succeeded, but Patchy noticed something that may not be what you wanted. The release notes show the first three warnings of an app, the build log shows all of them, and `status-<key>.json` keeps them under `warnings`.
+
+- `enable: "Name" is not a patch for <package> in <bundles> (did you mean "Other name"?)`: a name in `exclude`, `enable` or `options` is not a patch of the bundles for this app. The patcher ignores unknown names without a word, so the setting did nothing. Fix the name, see [Patch names are checked](configuration.md#patch-names-are-checked).
+- `The downloaded APK is <package>, but this build is configured for <package>` or `The downloaded APK reports version X, but Y was requested`: the file that came from APKMirror or GitHub is not what the build asked for. Check `pkg`, the `apk_source` of the app and `force_version`. Patching went on, so the result is probably wrong.
+- `The downloaded APK ships native libraries for ... but not for <arch>`: the original has no libraries for the architecture the patcher keeps, so the patched app may not start. Check `arch` and the variant APKMirror chose, see [How the APKMirror variant is chosen](configuration.md#how-the-apkmirror-variant-is-chosen).
+- `The patched APK still holds native libraries for ...`, `The patched APK lost the <arch> native libraries of the original` or `The manifest of the patched APK could not be read`: the output differs from what `--striplibs` should leave. The APK is still published; install it and check that the app starts.
+
+A patched APK without `classes.dex`, or one that is not a readable APK at all, is not a warning: the build fails with `The patched APK has no classes.dex, so it cannot be a working app`.
+
+## `The patcher wrote no readable result file, so the applied patches are not listed`
+
+Patchy asks the patcher for a result file (`--result-file`) to learn which patches were applied and which failed. When the file is missing or is not valid JSON, usually because the patcher crashed before it wrote it, the APK is still built and published. Its release notes then do not list the applied patches, and a failed build is explained by the patcher's output instead of the patch that failed.
 
 ## `No APKMirror release page found for version <version>`
 
@@ -73,6 +96,26 @@ The build asks for one kind of APKMirror file with `apk_type`, and the release p
 
 The patched manifest stores the app name as plain text that looks like a resource reference (`@string/four_ones` for the 1.1.1.1 app), so Android shows that text as it is. Patchy repairs this after patching: the label of the application and of the launcher activities becomes the build's `display_name`, and the build log says `App name of <application> changed from '@string/four_ones' to '1.1.1.1'`. When a build still shows a wrong name, set `label` for it in its app file, see [App name](configuration.md#app-name). The warning `The app name of ... could not be checked` means the manifest could not be rewritten; the APK was then published as the patcher produced it, and the text after the colon tells why.
 
+## `Nothing to build`
+
+Not an error. A scheduled run, or a manual one with `only_changed` ticked, found the patcher, the patch bundles, the apps and the configuration unchanged since the last release, so it ended after the `plan` job and published nothing. To build anyway, start the **Release** workflow by hand with `only_changed` unticked. See [Only-changed runs](workflows.md#only-changed-runs).
+
+## An app is in the release but was not rebuilt
+
+The release notes say `Carried over from build-..., because this app was not rebuilt in this run`, and the notification lists the app under `carried over from the previous release`. Patchy copies the APK of every app a run did not produce from the previous release, so a release always holds all apps. Either nothing changed for the app, or the run built other apps only. When the note goes on with `The new build failed: <reason>`, the build of the app failed and its last good APK was kept: fix the reason and run the build again. Set the repository variable `CARRY_FORWARD` to `false` to publish only the apps a run built. See [Carried-over apps](workflows.md#carried-over-apps).
+
+## Scheduled runs stopped
+
+In a public repository GitHub switches scheduled workflows off after 60 days without repository activity. Open **Actions → Release** and enable the workflow again. Also check that `release.yml` still has its `schedule:` block and that the file is on the default branch.
+
+## `Could not save patchy-state.json` or `patchy-state.json ... is not readable`
+
+The state file is how an only-changed run knows what the last release was made from. When it cannot be uploaded, or the previous one cannot be read, nothing is lost except the comparison: the next only-changed run builds every selected app again and writes a new file. A release that predates this feature has none, so the first run after the update builds everything.
+
+## The Morphe catalog cannot be loaded
+
+The `discover.yml` workflow reads `https://morphe-patches.software/data/bundles.json`, a file that Patchy does not control. `Could not load the Morphe catalog: ...` means it could not be downloaded, because the site was down or answered with an error; run the workflow again later. `The Morphe catalog is not a JSON object` or `The Morphe catalog lists no apps and no bundles` means the file loaded but does not look like the catalog Patchy expects, so the site changed its format and `src/patchy/fetch/morphe.py` needs an update. Only the report is affected; builds never read the catalog.
+
 ## `Keystore file not found at .../morphe-data/morphe.keystore`
 
 Morphe CLI 1.18.2-dev.1 and 1.18.2-dev.2 check for the patcher's own default keystore before signing and abort when it does not exist, which is always the case on a fresh runner. Patchy starts the patcher with `--unsigned` (the release job signs with your key), so current versions never reach that check. If you still see this message, the workflow is running an older copy of Patchy.
@@ -107,8 +150,8 @@ Companions are only uploaded when a build listed in their `for_builds` was publi
 
 ## Uploads fail with a 5xx or a rate-limit answer
 
-Too many assets were being uploaded at the same time. Set `UPLOAD_CONCURRENCY` to a lower number (6 was the previous default) in the `Create release and clean up old releases` step's `env:`. A failed upload fails the run, so run the workflow again.
+Too many assets were being uploaded at the same time. Set `UPLOAD_CONCURRENCY` to a lower number (6 was the previous default) in the `Create the release, carry over unchanged apps and clean up old releases` step's `env:`. A failed upload fails the run, so run the workflow again.
 
 ## Old releases were not removed
 
-Only releases whose tag starts with `build-` are removed, and a failed deletion is logged without failing the run. Check the `release` job log for the exact API response.
+Only releases whose tag starts with `build-` are removed, and the newest `KEEP_RELEASES` of them (default `1`, which is the previous release) are kept on purpose, see [Release retention](workflows.md#release-retention). A failed deletion is logged without failing the run. Check the `release` job log for the exact API response.

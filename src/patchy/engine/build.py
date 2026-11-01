@@ -12,9 +12,12 @@ from ..catalog.models import ApkMirrorSource, ApkSource, BuildConfig
 from ..core import log, paths
 from ..fetch import apkmirror, github
 from ..fetch.bundles import Tools
+from . import notes, sanity
 from .bundle_compat import format_patcher_version, split_by_generation
 from .label import fix_apk_label
-from .patcher import NoCompatiblePatches, PatchFailed, UnsupportedBuild, list_versions, patch_apk
+from .patch_names import configured_names, unknown_names
+from .patcher import NoCompatiblePatches, PatchFailed, UnsupportedBuild, list_patch_names, list_versions, patch_apk
+from .report import failure_reason, squash
 from .verify import UnpinnedSignature, verify_apk_signature
 from .versions import extract_cli_version_codes, extract_cli_versions, file_name_version, rank_versions
 
@@ -24,6 +27,7 @@ MAX_VERSION_ATTEMPTS = 3
 class VersionChoice(NamedTuple):
     version: str
     build_codes: dict[str, int]
+    force: bool = False
 
 
 class StableFallback(NamedTuple):
@@ -39,6 +43,7 @@ def write_status(
     file: str | None = None,
     pending_pin: dict[str, str] | None = None,
     timings: dict[str, float] | None = None,
+    details: notes.BuildNotes | None = None,
 ) -> None:
     try:
         directory = paths.out_dir()
@@ -53,9 +58,34 @@ def write_status(
         }
         if timings:
             payload["timings"] = {stage: round(seconds, 1) for stage, seconds in timings.items()}
+        if details is not None:
+            if details.attempts:
+                payload["attempts"] = details.attempts
+            if details.report is not None:
+                payload["patches"] = {"applied": details.report["applied"], "failed": details.report["failed"]}
+            if details.warnings:
+                payload["warnings"] = details.warnings
+            if details.forced:
+                payload["forced"] = True
+            if details.apk:
+                payload["apk"] = details.apk
         (directory / f"status-{build_key}.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     except OSError as e:
         log.warn(f"Could not write status for {build_key}: {e}")
+
+
+def _warn(text: str) -> None:
+    log.warn(text)
+    notes.warn(text)
+
+
+def _result_file(build_key: str) -> Path:
+    return paths.diagnostics_dir() / f"patch-result-{build_key}.json"
+
+
+def _current_report() -> notes.PatchReport | None:
+    current = notes.current()
+    return current.report if current is not None else None
 
 
 async def _select_versions(
@@ -64,6 +94,7 @@ async def _select_versions(
     build = catalog.BUILDS[build_key]
     app_slug = build["app_slug"]
     source = build["apk_source"]
+    forcing = bool(build.get("force"))
 
     forced_version = build.get("force_version")
     ranked: list[str] = []
@@ -80,6 +111,21 @@ async def _select_versions(
             log.warn(f"Could not fetch version list: {e}")
 
     attempts = MAX_VERSION_ATTEMPTS if source["type"] == "apkmirror" else 1
+
+    if forcing and not forced_version:
+        newest = await _newest_version(build_key, source)
+        if newest is not None:
+            versions = [newest, *[version for version in ranked if version != newest]][:attempts]
+            return [
+                VersionChoice(
+                    version,
+                    build_codes_by_version.get(version, {}),
+                    force=version == newest and newest not in ranked,
+                )
+                for version in versions
+            ]
+        log.warn("The newest version could not be determined, so this build is patched without --force.")
+
     versions = [forced_version] if forced_version else ranked[:attempts]
 
     if not versions:
@@ -95,7 +141,22 @@ async def _select_versions(
     if not versions:
         raise RuntimeError("Could not determine a suitable version number.")
 
-    return [VersionChoice(version, build_codes_by_version.get(version, {})) for version in versions]
+    return [
+        VersionChoice(version, build_codes_by_version.get(version, {}), force=forcing and bool(forced_version))
+        for version in versions
+    ]
+
+
+async def _newest_version(build_key: str, source: ApkSource) -> str | None:
+    if source["type"] == "github":
+        return "latest"
+    try:
+        latest = await apkmirror.get_latest_listing(catalog.BUILDS[build_key]["app_slug"], source)
+    except Exception as e:
+        log.warn(f"Could not look up the newest version: {e}")
+        return None
+    version = latest.get("version") if latest else None
+    return str(version) if version else None
 
 
 async def _stable_fallback(
@@ -144,9 +205,15 @@ async def _download_from_apkmirror(
         try:
             return await download(choice), choice
         except apkmirror.ReleaseNotFound as e:
+            notes.attempt(choice.version, "download", squash(str(e)))
             log.warn(f"{e}. Trying {choices[index + 1].version}, the next version the patch bundle supports.")
 
-    return await download(choices[-1]), choices[-1]
+    last = choices[-1]
+    try:
+        return await download(last), last
+    except apkmirror.ReleaseNotFound as e:
+        notes.attempt(last.version, "download", squash(str(e)))
+        raise
 
 
 async def _refetch_accepted(
@@ -200,7 +267,11 @@ def _bundle_labels(build: BuildConfig, bundle_paths: Sequence[str | Path]) -> li
 
 
 async def _patch(
-    build: BuildConfig, cli_jar: str | Path, bundle_paths: Sequence[str | Path], apk_path: str
+    build: BuildConfig,
+    cli_jar: str | Path,
+    bundle_paths: Sequence[str | Path],
+    apk_path: str,
+    force: bool = False,
 ) -> str:
     async def run(bundles: Sequence[str | Path]) -> str:
         return await patch_apk(
@@ -211,6 +282,8 @@ async def _patch(
             enable=build.get("enable"),
             options=build.get("options"),
             arch=build["arch"],
+            result_file=_result_file(build["key"]),
+            force=force,
         )
 
     try:
@@ -235,6 +308,25 @@ async def _patch(
         return await run([bundle_paths[index] for index in split.kept])
 
 
+async def _patch_selected(
+    build: BuildConfig,
+    source: ApkSource,
+    cli_jar: str | Path,
+    bundle_paths: Sequence[str | Path],
+    apk_path: str,
+    selected: VersionChoice,
+) -> str:
+    try:
+        with log.timed("patch"):
+            return await _patch(build, cli_jar, bundle_paths, apk_path, selected.force)
+    except UnsupportedBuild as err:
+        if source["type"] != "apkmirror":
+            raise
+        accepted_path = await _refetch_accepted(build, source, selected, err)
+        with log.timed("patch"):
+            return await _patch(build, cli_jar, bundle_paths, accepted_path, selected.force)
+
+
 async def _build_one(
     build: BuildConfig,
     source: ApkSource,
@@ -242,34 +334,78 @@ async def _build_one(
     cli_jar: str | Path,
     bundle_paths: Sequence[str | Path],
     tried: list[str],
-) -> tuple[str, VersionChoice]:
+) -> tuple[str, VersionChoice, sanity.ApkFacts | None]:
     app_slug = build["app_slug"]
+    pending = list(choices)
 
-    with log.timed("download"):
-        if source["type"] == "apkmirror":
-            apk_path, selected = await _download_from_apkmirror(build, source, choices, tried)
-        elif source["type"] == "github":
-            selected = choices[0]
-            tried.append(selected.version)
-            apk_path = await github.download_apk(selected.version, app_slug, source)
-        else:
-            raise RuntimeError(f"Unknown apk_source.type {source['type']!r} for build {build['key']!r}")
+    while True:
+        notes.set_report(None)
 
-    with log.timed("verify"):
-        await verify_apk_signature(apk_path, app_slug)
+        with log.timed("download"):
+            if source["type"] == "apkmirror":
+                apk_path, selected = await _download_from_apkmirror(build, source, pending, tried)
+            elif source["type"] == "github":
+                selected = pending[0]
+                tried.append(selected.version)
+                apk_path = await github.download_apk(selected.version, app_slug, source)
+            else:
+                raise RuntimeError(f"Unknown apk_source.type {source['type']!r} for build {build['key']!r}")
 
-    async def patch(path: str) -> str:
-        return await _patch(build, cli_jar, bundle_paths, path)
+        with log.timed("verify"):
+            await verify_apk_signature(apk_path, app_slug)
+
+        original = sanity.inspect_quietly(apk_path)
+        for problem in sanity.input_problems(
+            original, package=build["pkg"], version=selected.version, arch=build["arch"]
+        ):
+            _warn(problem)
+
+        try:
+            patched = await _patch_selected(build, source, cli_jar, bundle_paths, apk_path, selected)
+        except PatchFailed as err:
+            reason = failure_reason(str(err), _current_report())
+            notes.attempt(selected.version, "patch", reason)
+            later = pending[pending.index(selected) + 1 :]
+            if not later:
+                raise
+            log.warn(
+                f"Patching {selected.version} failed ({reason}). "
+                f"Stepping down to {later[0].version}, the next version the patch bundle supports."
+            )
+            pending = later
+            continue
+
+        notes.set_forced(selected.force)
+        return patched, selected, original
+
+
+async def _check_patch_names(build: BuildConfig, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> None:
+    configured = configured_names(build)
+    if not configured:
+        return
 
     try:
-        with log.timed("patch"):
-            return await patch(apk_path), selected
-    except UnsupportedBuild as err:
-        if source["type"] != "apkmirror":
-            raise
-        apk_path = await _refetch_accepted(build, source, selected, err)
-        with log.timed("patch"):
-            return await patch(apk_path), selected
+        known = await list_patch_names(cli_jar, bundle_paths, build["pkg"])
+    except Exception as e:
+        log.warn(f"Could not check the patch names: {e}")
+        return
+    if not known:
+        return
+
+    for problem in unknown_names(configured, known, package=build["pkg"], bundles=build["bundles"]):
+        _warn(problem)
+
+
+def _check_patched(apk: Path, build: BuildConfig, original: sanity.ApkFacts | None) -> None:
+    patched = sanity.inspect_apk(apk)
+    for problem in sanity.output_problems(patched, arch=build["arch"], original=original):
+        _warn(problem)
+    notes.set_apk(patched.as_dict())
+    libraries = ", ".join(sorted(patched.abis)) or "none"
+    log.info(
+        f"Patched APK: {patched.package} {patched.version_name} (version code {patched.version_code}), "
+        f"native libraries: {libraries}"
+    )
 
 
 async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Sequence[str | Path]) -> dict | None:
@@ -279,12 +415,14 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
 
     log.header(f"PROCESSING: {app_slug.upper()}")
 
+    await _check_patch_names(build, cli_jar, bundle_paths)
+
     with log.timed("select"):
         choices = await _select_versions(build_key, cli_jar, bundle_paths)
 
     tried: list[str] = []
     try:
-        patched_apk, selected = await _build_one(build, source, choices, cli_jar, bundle_paths, tried)
+        patched_apk, selected, original = await _build_one(build, source, choices, cli_jar, bundle_paths, tried)
     except (apkmirror.ReleaseNotFound, PatchFailed):
         fallback = await _stable_fallback(build_key, cli_jar, bundle_paths, tried)
         if fallback is None:
@@ -293,7 +431,9 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
             f"The patch bundle lists {', '.join(fallback.experimental)} as experimental, and building it failed. "
             f"Falling back to {fallback.choices[0].version}, the newest stable version it supports."
         )
-        patched_apk, selected = await _build_one(build, source, fallback.choices, cli_jar, bundle_paths, tried)
+        patched_apk, selected, original = await _build_one(
+            build, source, fallback.choices, cli_jar, bundle_paths, tried
+        )
 
     selected_version = selected.version
 
@@ -310,6 +450,7 @@ async def process_build(build_key: str, cli_jar: str | Path, bundle_paths: Seque
 
     shutil.copyfile(patched_apk, final_path)
     _fix_app_label(final_path, build.get("label"), display_name)
+    _check_patched(final_path, build, original)
 
     return {
         "app_name": app_slug,
@@ -336,12 +477,18 @@ def _with_total(timings: dict[str, float], began: float) -> dict[str, float]:
     return {**timings, "total": time.monotonic() - began}
 
 
+def _failure_text(err: Exception, details: notes.BuildNotes) -> str:
+    if isinstance(err, PatchFailed):
+        return failure_reason(str(err), details.report)
+    return str(err)
+
+
 async def run_builds(build_keys: list[str], tools: Tools) -> list[str]:
     failed: list[str] = []
 
     for index, build_key in enumerate(build_keys):
         began = time.monotonic()
-        with log.collect_timings() as timings:
+        with log.collect_timings() as timings, notes.collect() as details:
             try:
                 result = await process_build(build_key, tools.cli, _bundle_paths(build_key, tools))
                 if result:
@@ -351,11 +498,15 @@ async def run_builds(build_keys: list[str], tools: Tools) -> list[str]:
                         version=result["version"],
                         file=result["name"],
                         timings=_with_total(timings, began),
+                        details=details,
                     )
                 else:
                     failed.append(build_key)
                     write_status(
-                        build_key, error="patch_apk produced no output file", timings=_with_total(timings, began)
+                        build_key,
+                        error="patch_apk produced no output file",
+                        timings=_with_total(timings, began),
+                        details=details,
                     )
             except UnpinnedSignature as err:
                 log.error(f"{build_key.upper()} failed, skipping: {err}")
@@ -365,11 +516,17 @@ async def run_builds(build_keys: list[str], tools: Tools) -> list[str]:
                     error=str(err),
                     pending_pin={"app": err.app_name, "sha256": err.fingerprint},
                     timings=_with_total(timings, began),
+                    details=details,
                 )
             except Exception as err:
                 log.error(f"{build_key.upper()} failed, skipping: {err}")
                 failed.append(build_key)
-                write_status(build_key, error=str(err), timings=_with_total(timings, began))
+                write_status(
+                    build_key,
+                    error=_failure_text(err, details),
+                    timings=_with_total(timings, began),
+                    details=details,
+                )
 
         is_last = index == len(build_keys) - 1
         if catalog.BUILDS[build_key]["apk_source"]["type"] == "apkmirror" and not is_last:

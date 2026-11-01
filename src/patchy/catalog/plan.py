@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +22,18 @@ class Plan:
 
     def matrix_json(self) -> str:
         return json.dumps(self.matrix)
+
+    @property
+    def has_builds(self) -> bool:
+        return bool(self.matrix)
+
+    @property
+    def builds(self) -> str:
+        return ",".join(self.matrix)
+
+
+def narrow(plan: Plan, keep: Collection[str]) -> Plan:
+    return Plan(tag=plan.tag, name=plan.name, matrix=[key for key in plan.matrix if key in keep])
 
 
 def select_builds(selection: str | None) -> list[str]:
@@ -58,4 +71,6 @@ def write_github_output(plan: Plan, destination: str | None = None) -> bool:
         f.write(f"tag={plan.tag}\n")
         f.write(f"name={plan.name}\n")
         f.write(f"matrix={plan.matrix_json()}\n")
+        f.write(f"builds={plan.builds}\n")
+        f.write(f"has_builds={'true' if plan.has_builds else 'false'}\n")
     return True

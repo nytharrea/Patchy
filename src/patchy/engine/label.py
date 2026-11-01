@@ -21,9 +21,14 @@ ATTRIBUTE_SIZE = 20
 
 TYPE_REFERENCE = 0x01
 TYPE_STRING = 0x03
+TYPE_INT_DEC = 0x10
+TYPE_INT_HEX = 0x11
+INTEGER_TYPES = frozenset({TYPE_INT_DEC, TYPE_INT_HEX})
 
 LABEL_ATTRIBUTE_ID = 0x01010001
 NAME_ATTRIBUTE_ID = 0x01010003
+VERSION_CODE_ATTRIBUTE_ID = 0x0101021B
+VERSION_NAME_ATTRIBUTE_ID = 0x0101021C
 ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
 
 LAUNCHER_CATEGORIES = frozenset({"android.intent.category.LAUNCHER", "android.intent.category.LEANBACK_LAUNCHER"})
@@ -45,6 +50,13 @@ class LabelChange:
 
 
 @dataclass(frozen=True)
+class ManifestInfo:
+    package: str | None
+    version_name: str | None
+    version_code: int | None
+
+
+@dataclass(frozen=True)
 class _Pool:
     start: int
     end: int
@@ -61,6 +73,9 @@ class _Element:
     label_text: str | None = None
     android_name: str | None = None
     launcher: bool = False
+    package: str | None = None
+    version_name: str | None = None
+    version_code: int | None = None
 
 
 def _u16(data: bytes, offset: int) -> int:
@@ -172,6 +187,12 @@ def _read_element(
             element.label_text = text
         elif attribute_id == NAME_ATTRIBUTE_ID or (unmapped and attribute_name == "name"):
             element.android_name = text
+        elif attribute_id == VERSION_CODE_ATTRIBUTE_ID or (unmapped and attribute_name == "versionCode"):
+            element.version_code = value if data_type in INTEGER_TYPES else None
+        elif attribute_id == VERSION_NAME_ATTRIBUTE_ID or (unmapped and attribute_name == "versionName"):
+            element.version_name = text
+        elif attribute_name == "package" and not _string(pool, namespace):
+            element.package = text
     return element
 
 
@@ -216,6 +237,14 @@ def _parse_manifest(data: bytes) -> tuple[_Pool, list[_Element], int]:
 
     _mark_launchers(elements)
     return pool, elements, total
+
+
+def manifest_info(manifest: bytes) -> ManifestInfo:
+    _, elements, _ = _parse_manifest(manifest)
+    root = next((element for element in elements if element.name == "manifest"), None)
+    if root is None:
+        raise LabelError(f"{MANIFEST_ENTRY} has no <manifest> element")
+    return ManifestInfo(root.package, root.version_name, root.version_code)
 
 
 def _append_string(pool: bytes, text: str) -> tuple[bytes, int]:

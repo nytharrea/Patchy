@@ -3,6 +3,7 @@ import re
 from .. import catalog
 from ..core import log, paths
 from ..fetch.bundles import ManifestError, read_manifest
+from . import details
 from .assets import find_build_statuses
 
 EMPTY = "–"
@@ -84,7 +85,33 @@ def _failures(planned: list[str], statuses: dict[str, dict]) -> list[str]:
             lines.append(f"- `{key}` — {NO_STATUS_REASON}")
         elif not _is_ok(status):
             reason = _first_line(str(status.get("error") or "unknown error"))
-            lines.append(f"- `{key}` — {_escape(reason)}")
+            line = f"- `{key}` — {_escape(reason)}"
+            tried = details.tried_versions(status)
+            if tried:
+                line += f" (tried {_escape(', '.join(tried))})"
+            lines.append(line)
+    return lines
+
+
+def _build_notes(planned: list[str], statuses: dict[str, dict]) -> list[str]:
+    lines: list[str] = []
+    for key in planned:
+        status = statuses.get(key)
+        if not _is_ok(status):
+            continue
+        applied = details.applied_patches(status)
+        items: list[str] = []
+        attempts = details.attempt_list(status)
+        if attempts:
+            tried = "; ".join(details.attempt_text(item, REASON_LIMIT) for item in attempts)
+            items.append("Newer versions could not be used: " + _escape(tried))
+        if details.is_forced(status):
+            items.append("Patched with `--force`, so the patches were not checked against this version.")
+        items += [f"⚠️ {_escape(details.one_line(text, REASON_LIMIT))}" for text in details.warning_texts(status)]
+        if not applied and not items:
+            continue
+        lines.append(f"- `{key}`" + (f" — {len(applied)} patch(es) applied" if applied else ""))
+        lines += [f"  - {item}" for item in items]
     return lines
 
 
@@ -105,6 +132,10 @@ def render_table(planned: list[str], statuses: dict[str, dict]) -> str:
     if highlights:
         lines += ["", " · ".join(highlights)]
     lines += ["", "_Times are measured inside each build job and do not include runner setup._"]
+
+    notes = _build_notes(planned, statuses)
+    if notes:
+        lines += ["", "### Build notes", "", *notes]
 
     failures = _failures(planned, statuses)
     if failures:

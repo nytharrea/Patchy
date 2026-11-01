@@ -373,3 +373,69 @@ async def test_download_latest_release_asset_replaces_a_cached_file_with_the_wro
 
     assert downloads == ["https://x/patches.mpp"]
     assert (tmp_path / "patches-1.0.0.mpp").stat().st_size == 2000
+
+
+async def test_download_to_passes_the_extra_headers_and_creates_the_folder(monkeypatch, tmp_path):
+    seen = {}
+
+    async def fake_download(url, output_path, expected_size=None, extra_headers=None):
+        seen.update(url=url, path=output_path, size=expected_size, headers=extra_headers)
+        return str(output_path)
+
+    monkeypatch.setattr(github, "_download_file", fake_download)
+    target = tmp_path / "nested" / "asset.apk"
+
+    result = await github.download_to("https://api/asset", target, 12, {"Accept": "application/octet-stream"})
+
+    assert result == str(target)
+    assert target.parent.is_dir()
+    assert seen == {
+        "url": "https://api/asset",
+        "path": target,
+        "size": 12,
+        "headers": {"Accept": "application/octet-stream"},
+    }
+
+
+async def test_download_to_retries_a_failed_download(monkeypatch, tmp_path):
+    monkeypatch.setattr(github.retry_conf, "exponential_with_jitter", lambda **kwargs: wait_none())
+    attempts = []
+
+    async def flaky(url, output_path, expected_size=None, extra_headers=None):
+        attempts.append(url)
+        if len(attempts) < 3:
+            raise RuntimeError("HTTP 502")
+        return str(output_path)
+
+    monkeypatch.setattr(github, "_download_file", flaky)
+
+    assert await github.download_to("https://api/asset", tmp_path / "x.apk") == str(tmp_path / "x.apk")
+    assert len(attempts) == 3
+
+
+async def test_the_latest_release_tag_is_read_from_the_release(monkeypatch):
+    async def fake_latest(owner, repo, prerelease=False, match=None):
+        assert (owner, repo, prerelease) == ("M66B", "FairEmail", False)
+        return {"tag_name": "1.2337"}
+
+    monkeypatch.setattr(github, "fetch_latest_release", fake_latest)
+
+    assert await github.latest_release_tag("M66B", "FairEmail") == "1.2337"
+
+
+async def test_the_latest_release_tag_is_unknown_when_the_lookup_fails_or_has_no_tag(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(github.log, "warn", warnings.append)
+
+    async def failing(owner, repo, prerelease=False, match=None):
+        raise RuntimeError("GitHub API error: 404")
+
+    monkeypatch.setattr(github, "fetch_latest_release", failing)
+    assert await github.latest_release_tag("o", "r") is None
+    assert any("404" in line for line in warnings)
+
+    async def untagged(owner, repo, prerelease=False, match=None):
+        return {"tag_name": ""}
+
+    monkeypatch.setattr(github, "fetch_latest_release", untagged)
+    assert await github.latest_release_tag("o", "r") is None

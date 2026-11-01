@@ -1,5 +1,7 @@
+import html
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import quote
@@ -7,9 +9,13 @@ from urllib.parse import quote
 from .. import catalog
 from ..core import log
 from ..fetch.bundles import Manifest
+from . import details
 
 RELEASE_BODY_LIMIT = 100_000
 CODE_FENCE = "```"
+APPLIED_SHOWN_LIMIT = 80
+WARNINGS_SHOWN_LIMIT = 3
+ATTEMPT_REASON_LIMIT = 110
 
 
 class BundleNotes(NamedTuple):
@@ -37,8 +43,9 @@ def match_asset(file_name: str):
     base = file_name[:-4]
 
     for build_key, display_name, tag in _asset_candidates():
-        prefix = display_name + "-"
-        if not base.lower().startswith(prefix.lower()):
+        plain = display_name + "-"
+        prefix = next((p for p in (plain, plain.replace(" ", ".")) if base.lower().startswith(p.lower())), None)
+        if prefix is None:
             continue
 
         remainder = base[len(prefix) :]
@@ -180,12 +187,75 @@ def _notes_section(entries: list[BundleNotes], budget: int) -> str:
     return section
 
 
-def build_release_body(matched: list[dict], manifest: Manifest | None, limit: int = RELEASE_BODY_LIMIT) -> str:
+def _code(text: str) -> str:
+    return "`" + " ".join(text.split()).replace("`", "'") + "`"
+
+
+def _version_text(apk: dict, status: Mapping[str, object] | None) -> str:
+    shown = _code(str(apk["version"]))
+    facts = (status or {}).get("apk")
+    reported = facts.get("version_name") if isinstance(facts, dict) else None
+    if apk["version"] == "latest" and isinstance(reported, str) and reported:
+        shown += f" ({_code(reported)})"
+    return shown
+
+
+def _attempt_phrase(attempt: tuple[str, str, str]) -> str:
+    version, stage, reason = attempt
+    return f"{_code(version)} ({stage}: {_code(details.one_line(reason, ATTEMPT_REASON_LIMIT))})"
+
+
+def _app_notes(apk: dict, status: Mapping[str, object] | None) -> list[str]:
+    if apk.get("carried"):
+        origin = f" from {_code(str(apk['carried_from']))}" if apk.get("carried_from") else ""
+        note = f"Carried over{origin}, because this app was not rebuilt in this run."
+        if apk.get("carried_reason"):
+            note += f" The new build failed: {_code(details.one_line(str(apk['carried_reason'])))}"
+        return [note]
+
+    notes: list[str] = []
+    attempts = details.attempt_list(status)
+    if attempts:
+        notes.append("Newer versions could not be used: " + ", ".join(_attempt_phrase(item) for item in attempts))
+    if details.is_forced(status):
+        notes.append("Patched with `--force`, so the patches were not checked against this version.")
+    warnings = details.warning_texts(status)
+    for text in warnings[:WARNINGS_SHOWN_LIMIT]:
+        notes.append("⚠️ " + _code(details.one_line(text)))
+    if len(warnings) > WARNINGS_SHOWN_LIMIT:
+        notes.append(f"⚠️ and {len(warnings) - WARNINGS_SHOWN_LIMIT} more warning(s)")
+    return notes
+
+
+def _patches_block(label: str, applied: list[str]) -> str:
+    shown = ", ".join(_code(name) for name in applied[:APPLIED_SHOWN_LIMIT])
+    hidden = len(applied) - APPLIED_SHOWN_LIMIT
+    if hidden > 0:
+        shown += f", and {hidden} more"
+    noun = "patch" if len(applied) == 1 else "patches"
+    summary = f"{html.escape(label, quote=False)} - {len(applied)} {noun} applied"
+    return f"\n<details>\n<summary>{summary}</summary>\n<br>\n\n{shown}\n\n</details>\n"
+
+
+def build_release_body(
+    matched: list[dict],
+    manifest: Manifest | None,
+    limit: int = RELEASE_BODY_LIMIT,
+    statuses: Mapping[str, Mapping[str, object]] | None = None,
+) -> str:
     body = "### Latest Patched APKs\n\n"
+    blocks = ""
     for apk in matched:
         icon = catalog.BUILDS[apk["build_key"]]["icon"]
-        body += f'* <img src="{icon}" width="16" height="16"> **{apk["display_name"]}** - `{apk["version"]}`\n'
+        status = (statuses or {}).get(apk["build_key"])
+        body += f'* <img src="{icon}" width="16" height="16"> **{apk["display_name"]}** - {_version_text(apk, status)}\n'
+        for note in _app_notes(apk, status):
+            body += f"  * {note}\n"
+        applied = [] if apk.get("carried") else details.applied_patches(status)
+        if applied:
+            blocks += _patches_block(apk["display_name"], applied)
 
+    body += blocks
     body += "\n---\n\n"
 
     if manifest is not None:

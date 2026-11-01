@@ -36,6 +36,13 @@ def validate_catalog() -> None:
                     f"character instead of one per patch name)."
                 )
 
+        force = build.get("force")
+        if force is not None and not isinstance(force, bool):
+            problems.append(
+                f'Build "{key}".force should be true or false, got {force!r} '
+                f"(see the Forced patching section of docs/configuration.md)."
+            )
+
         label = build.get("label")
         if label is not None and not (isinstance(label, str) and label.strip() and len(label) <= MAX_LABEL_LENGTH):
             problems.append(
