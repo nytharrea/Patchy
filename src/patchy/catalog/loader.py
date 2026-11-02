@@ -143,7 +143,6 @@ def load_builds() -> dict[str, BuildConfig]:
                     "options": dict(build.get("options") or {}),
                     "force_version": build.get("force_version"),
                     "force_build": build.get("force_build"),
-                    "force": build.get("force", False),
                 }
         except (KeyError, TypeError, AttributeError) as e:
             raise CatalogError(f"{path.name} is malformed: {e}") from e

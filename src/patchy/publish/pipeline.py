@@ -1,6 +1,5 @@
 import json
 import time
-from collections.abc import Mapping
 from functools import partial
 from pathlib import Path
 
@@ -10,25 +9,18 @@ from ..core.concurrency import run_limited
 from ..core.settings import settings
 from ..engine.signer import SigningError, load_credentials, sign_apk
 from ..fetch.bundles import Manifest, ManifestError, companions_for, read_manifest
-from . import details, notify
+from . import notify
 from .assets import (
     build_release_body,
-    find_build_statuses,
     find_failure_reasons,
     find_patched_apks,
-    match_asset,
 )
-from .incremental import read_release_state
 from .release import (
     ReleaseBodyRejected,
     create_new_release,
     delete_other_releases,
-    download_asset,
-    previous_release,
     upload_assets,
-    upload_with_replace,
 )
-from .state import STATE_FILE_NAME, BuildRecord, State, make_record, next_state, write_state
 
 MEGABYTE = 1024 * 1024
 
@@ -105,75 +97,6 @@ def _load_manifest() -> Manifest | None:
         return None
 
 
-async def _find_previous(release_tag: str) -> dict | None:
-    try:
-        return await previous_release(release_tag)
-    except Exception as e:
-        log.warn(f"Could not look up the previous release, so nothing is carried over: {e}")
-        return None
-
-
-async def _carry_forward(previous: dict | None, built: set[str], reasons: Mapping[str, str]) -> list[dict]:
-    if previous is None:
-        return []
-
-    origin = str(previous.get("tag_name") or "")
-    carried: list[dict] = []
-    seen = set(built)
-
-    for asset in previous.get("assets") or []:
-        name = str(asset.get("name") or "")
-        found = match_asset(name)
-        if found is None:
-            continue
-        build_key, display_name, version = found
-        if build_key in seen:
-            continue
-        try:
-            path = await download_asset(asset, paths.carried_dir() / name)
-        except Exception as e:
-            log.warn(f"Could not carry {name} over from {origin}: {e}")
-            continue
-        seen.add(build_key)
-        carried.append(
-            {
-                "build_key": build_key,
-                "display_name": display_name,
-                "version": version,
-                "path": str(path),
-                "name": name,
-                "carried": True,
-                "carried_from": origin,
-                "carried_reason": reasons.get(build_key),
-            }
-        )
-        log.info(f"Carrying {name} over from {origin}.")
-
-    return carried
-
-
-def _built_records(
-    matched: list[dict], statuses: Mapping[str, Mapping[str, object]], manifest: Manifest | None
-) -> dict[str, BuildRecord]:
-    digests = (manifest.get("fingerprints") if manifest else None) or {}
-    records: dict[str, BuildRecord] = {}
-    for apk in matched:
-        key = apk["build_key"]
-        retry = bool(details.attempt_list(statuses.get(key)))
-        records[key] = make_record(apk["version"], apk["name"], digests.get(key), retry)
-    return records
-
-
-async def _publish_state(release: dict, state: State) -> None:
-    try:
-        path = write_state(state, paths.state_dir() / STATE_FILE_NAME)
-        await upload_with_replace(release, str(path))
-    except Exception as e:
-        log.warn(f"Could not save {STATE_FILE_NAME}, so the next only-changed run builds every app again: {e}")
-        return
-    log.success(f"Saved {STATE_FILE_NAME} with {len(state['builds'])} app(s).")
-
-
 async def run_publish() -> bool:
     if not settings.release_tag or not settings.release_name:
         raise RuntimeError("Missing RELEASE_TAG/RELEASE_NAME (expected to be set by `patchy plan`'s output)")
@@ -194,20 +117,14 @@ async def run_publish() -> bool:
 
     succeeded_keys = {apk["build_key"] for apk in matched}
     failed_keys = [key for key in planned if key not in succeeded_keys]
-    statuses = find_build_statuses(paths.artifacts_dir(), signed_dir)
     failure_reasons = find_failure_reasons(paths.artifacts_dir(), signed_dir)
 
     if not matched:
         log.error("No apps patched successfully in this run, skipping release creation.")
-        await notify.notify(notify.format_all_failed(release_name, failed_keys, failure_reasons, statuses))
+        await notify.notify(notify.format_all_failed(release_name, failed_keys, failure_reasons))
         return False
 
-    previous = await _find_previous(release_tag) if settings.carry_forward else None
-    carried = await _carry_forward(previous, succeeded_keys, failure_reasons)
-    previous_state = await read_release_state(previous) if carried else None
-    everything = matched + carried
-
-    body = build_release_body(everything, manifest, statuses=statuses)
+    body = build_release_body(matched, manifest)
 
     log.step(f"Creating release: {release_tag}")
     try:
@@ -215,29 +132,18 @@ async def run_publish() -> bool:
     except ReleaseBodyRejected as e:
         log.warn(f"GitHub rejected the release description, publishing without the patch bundle notes: {e}")
         release = await create_new_release(
-            release_tag, release_name, build_release_body(everything, None, statuses=statuses), draft=False
+            release_tag, release_name, build_release_body(matched, None), draft=False
         )
     log.success(f"Release created: {release['tag_name']} (id={release['id']})")
 
-    carried_note = f" and {len(carried)} carried over" if carried else ""
-    log.step(
-        f"Uploading {len(matched)} patched APK(s){carried_note} (up to {settings.upload_concurrency} at once)..."
-    )
-    companions = companions_for(apk["build_key"] for apk in everything)
-    await upload_assets(release, [apk["path"] for apk in everything], companions)
+    log.step(f"Uploading {len(matched)} patched APK(s) (up to {settings.upload_concurrency} at once)...")
+    companions = companions_for(apk["build_key"] for apk in matched)
+    await upload_assets(release, [apk["path"] for apk in matched], companions)
 
     log.success("All apps successfully published under one release!")
 
-    state = next_state(
-        previous_state,
-        release_tag,
-        _built_records(matched, statuses, manifest),
-        {apk["build_key"]: make_record(apk["version"], apk["name"]) for apk in carried},
-    )
-    await _publish_state(release, state)
-
     try:
-        await delete_other_releases(release["id"], keep=settings.keep_releases)
+        await delete_other_releases(release["id"])
         log.info("Old releases deleted.")
     except Exception as e:
         log.warn(f"Failed to delete old releases: {e}")
@@ -245,7 +151,5 @@ async def run_publish() -> bool:
     release_url = release.get("html_url") or (
         f"https://github.com/{settings.github_repository}/releases/tag/{release_tag}"
     )
-    await notify.notify(
-        notify.format_summary(release_name, release_url, everything, failed_keys, failure_reasons, statuses)
-    )
+    await notify.notify(notify.format_summary(release_name, release_url, matched, failed_keys, failure_reasons))
     return True

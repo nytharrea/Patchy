@@ -1,18 +1,12 @@
 name: Release
 
 on:
-  schedule:
-    - cron: "23 */6 * * *"
   workflow_dispatch:
     inputs:
       builds:
         description: "Build keys to patch, comma-separated (all = every build)"
         type: string
         default: "all"
-      only_changed:
-        description: "Skip apps whose patcher, patch bundles, app version and configuration are unchanged since the last release"
-        type: boolean
-        default: false
       pin:
         description: "App slug to trust: moves its fingerprint from pins/pending.json to pins/known.json (skips patching)"
         type: string
@@ -45,7 +39,6 @@ jobs:
       release_tag: ${{ steps.plan.outputs.tag }}
       release_name: ${{ steps.plan.outputs.name }}
       build_matrix: ${{ steps.plan.outputs.matrix }}
-      has_builds: ${{ steps.plan.outputs.has_builds }}
 
     steps:
       - name: Checkout
@@ -71,21 +64,16 @@ jobs:
       - name: Validate config and plan the release
         id: plan
         env:
-          BUILDS: ${{ inputs.builds || 'all' }}
-          ONLY_CHANGED: ${{ github.event_name == 'schedule' || inputs.only_changed }}
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          BUILDS: ${{ inputs.builds }}
         run: uv run --no-sync patchy plan
 
       - name: Fetch the patcher CLI and patch bundles once for the whole matrix
-        if: ${{ steps.plan.outputs.has_builds == 'true' }}
         env:
-          BUILDS: ${{ steps.plan.outputs.builds }}
+          BUILDS: ${{ inputs.builds }}
           GITHUB_TOKEN: ${{ github.token }}
         run: uv run --no-sync patchy fetch
 
       - name: Upload tools artifact
-        if: ${{ steps.plan.outputs.has_builds == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: patchy-tools
@@ -95,7 +83,6 @@ jobs:
           compression-level: 0
 
       - name: Upload manifest artifact
-        if: ${{ steps.plan.outputs.has_builds == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: patchy-manifest
@@ -105,7 +92,6 @@ jobs:
 
   build:
     needs: plan
-    if: ${{ needs.plan.outputs.has_builds == 'true' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 25
 
@@ -214,9 +200,9 @@ jobs:
 
   release:
     needs: [plan, build]
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.has_builds == 'true' }}
+    if: ${{ always() && needs.plan.result == 'success' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     permissions:
       contents: write
@@ -289,7 +275,7 @@ jobs:
         with:
           subject-path: build/signed/*.apk
 
-      - name: Create the release, carry over unchanged apps and clean up old releases
+      - name: Create release and clean up old releases
         run: uv run --no-sync patchy publish
         env:
           PYTHONUNBUFFERED: "1"
@@ -297,8 +283,6 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
           RELEASE_NAME: ${{ needs.plan.outputs.release_name }}
-          KEEP_RELEASES: ${{ vars.KEEP_RELEASES || '1' }}
-          CARRY_FORWARD: ${{ vars.CARRY_FORWARD || 'true' }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

@@ -30,20 +30,14 @@ src/patchy/
 │  ├─ models.py        TypedDicts for builds, bundles, companions
 │  ├─ loader.py        reads config/apps/*.yaml, bundles.yaml, companions.yaml
 │  ├─ validate.py      cross-checks the loaded config
-│  ├─ plan.py          release tag, name and build matrix, narrowed to the builds that changed
-│  └─ discover.py      Markdown reports on the Morphe catalog: who patches an app, YAML to add it
+│  └─ plan.py          release tag, name and build matrix
 ├─ fetch/
 │  ├─ apkmirror/       client.py (orchestration), parse.py (HTML, variant choice), challenge.py (Cloudflare handling)
 │  ├─ github.py        GitHub release downloads and GitHub-hosted apps
-│  ├─ bundles.py       patcher CLI, patch bundles, companions, bundles.json manifest (with the fingerprint of every build)
-│  └─ morphe.py        reads the Morphe patch catalog (`bundles.json` of morphe-patches.software)
+│  └─ bundles.py       patcher CLI, patch bundles, companions, bundles.json manifest
 ├─ engine/
-│  ├─ build.py         one build: version (stepping down to older ones, `--force`), download, verify, patch (with a second attempt for bundles built for different Patcher versions), checks, app name repair, status file with stage timings and the build report
-│  ├─ notes.py         collects attempts, patch report, warnings and APK facts while a build runs
-│  ├─ report.py        reads the patcher's `--result-file` and turns a failure into a short reason
-│  ├─ sanity.py        reads package, version and native libraries of the original and the patched APK
-│  ├─ patch_names.py   finds `exclude`, `enable` and `options` names that no patch has
-│  ├─ patcher.py       async patcher CLI wrapper with a per-line watchdog, `list-versions` and `list-patches`
+│  ├─ build.py         one build: version, download, verify, patch (with a second attempt for bundles built for different Patcher versions), app name repair, status file with stage timings
+│  ├─ patcher.py       async patcher CLI wrapper with a per-line watchdog
 │  ├─ bundle_compat.py reads the Morphe Patcher version a patch bundle was built for and picks the bundles that can run together
 │  ├─ label.py         repairs or sets the app name (`android:label`) in the binary manifest of a patched APK
 │  ├─ verify.py        apksigner-based certificate check against the pins
@@ -54,9 +48,6 @@ src/patchy/
 │  ├─ pipeline.py      `sign` and `publish` orchestration
 │  ├─ release.py       GitHub Releases REST wrapper
 │  ├─ assets.py        file name matching, status files, release body
-│  ├─ details.py       reads patches, attempts and warnings from status files
-│  ├─ state.py         `patchy-state.json`: build fingerprints and what changed
-│  ├─ incremental.py   resolves what a build is made from and compares it with the previous release
 │  ├─ telemetry.py     per-build time table for the job summary
 │  └─ notify.py        Discord, Telegram and Apprise notifications
 └─ core/               settings, paths, log (including stage timers and the job summary writer), retry, http, process, toolchain, flaresolverr
@@ -69,18 +60,17 @@ src/patchy/
 | Command | Purpose |
 |---|---|
 | `patchy validate` | Validate `config/` without network access |
-| `patchy plan [--builds KEYS] [--only-changed]` | Validate and write `tag`, `name`, `matrix`, `builds`, `has_builds` to `$GITHUB_OUTPUT`. `--only-changed` keeps only the builds that differ from the last release |
-| `patchy fetch [--builds KEYS]` | Download the patcher CLI and the needed bundles, write `build/manifest/bundles.json`, including what each build is made from |
+| `patchy plan [--builds KEYS]` | Validate and write `tag`, `name`, `matrix` to `$GITHUB_OUTPUT` |
+| `patchy fetch [--builds KEYS]` | Download the patcher CLI and the needed bundles, write `build/manifest/bundles.json` |
 | `patchy build [--app KEY]` | Download, verify and patch one build (`all` runs every build); writes `build/out/` |
 | `patchy sign` | Zipalign and sign everything in `build/artifacts/` into `build/signed/` |
-| `patchy publish` | Create the release from `build/signed/`, carry over the apps that were not built, upload with `patchy-state.json`, delete old releases, notify |
+| `patchy publish` | Create the release from `build/signed/`, upload, clean up, notify |
 | `patchy summary` | Write the per-build download, patch and total times (and failures) as a table to `$GITHUB_STEP_SUMMARY`, or print it when that variable is not set |
 | `patchy pin APP [--sha256 HEX]` | Promote a pending fingerprint to `pins/known.json` and commit |
 | `patchy pin --collect DIR` | Record fingerprints reported by build status files into `pins/pending.json` |
-| `patchy discover [--package PKG] [--query TEXT] [--limit N]` | Read the Morphe patch catalog and write a Markdown report to `$GITHUB_STEP_SUMMARY`, or print it when that variable is not set |
 | `patchy toolchain [--no-install]` | Find (and install the newest) Android build-tools; exports `APKSIGNER` and `ZIPALIGN` to `$GITHUB_ENV` |
 
-`--builds` also reads the `BUILDS` environment variable, `--only-changed` reads `ONLY_CHANGED`, and the options of `patchy discover` read `DISCOVER_PACKAGE`, `DISCOVER_QUERY` and `DISCOVER_LIMIT`.
+`--builds` also reads the `BUILDS` environment variable.
 
 ## Environment reference
 
@@ -102,11 +92,6 @@ Matched case-insensitively by `core/settings.py`.
 | `RELEASE_TAG`, `RELEASE_NAME` | Set from the plan job's outputs; required by `patchy publish` |
 | `SIGN_CONCURRENCY` | APKs signed at once by `patchy sign` (default 4) |
 | `UPLOAD_CONCURRENCY` | Release assets uploaded at once by `patchy publish`, companions included (default 10) |
-| `KEEP_RELEASES` | Older Patchy releases `patchy publish` keeps next to the new one (default 1, `0` keeps none) |
-| `CARRY_FORWARD` | `false` publishes only the apps a run built instead of copying the others from the previous release (default `true`) |
-| `ONLY_CHANGED` | `true`, `1`, `yes` or `on` makes `patchy plan` keep only the builds that changed since the last release |
-| `CATALOG_URL` | Address of the Morphe patch catalog read by `patchy discover` (default `https://morphe-patches.software/data/bundles.json`) |
-| `DISCOVER_PACKAGE`, `DISCOVER_QUERY`, `DISCOVER_LIMIT` | Defaults for the options of `patchy discover` |
 | `PATCHY_BUILD_DIR` | Relocate `build/` |
 | `NO_COLOR`, `GITHUB_ACTIONS` | Console colors and GitHub annotation output |
 | `GITHUB_STEP_SUMMARY` | Set by GitHub Actions for every step; `patchy summary` appends the telemetry table to this file |

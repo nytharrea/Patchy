@@ -119,19 +119,6 @@ def test_apk_type_that_is_neither_apk_nor_bundle_is_caught(monkeypatch, value):
         validate.validate_catalog()
 
 
-@pytest.mark.parametrize("value", [None, True, False])
-def test_valid_force_settings_pass(monkeypatch, value):
-    monkeypatch.setitem(validate.BUILDS, "youtube", {**_youtube_build(), "force": value})
-    validate.validate_catalog()
-
-
-@pytest.mark.parametrize("value", ["yes", "true", 1, 0, ["true"]])
-def test_force_that_is_not_true_or_false_is_caught(monkeypatch, value):
-    monkeypatch.setitem(validate.BUILDS, "youtube", {**_youtube_build(), "force": value})
-    with pytest.raises(validate.ConfigError, match='Build "youtube".force should be true or false'):
-        validate.validate_catalog()
-
-
 def test_apk_type_on_a_github_source_is_caught(monkeypatch):
     github_source = {"type": "github", "owner": "SomeOrg", "repo": "some-repo"}
     monkeypatch.setitem(

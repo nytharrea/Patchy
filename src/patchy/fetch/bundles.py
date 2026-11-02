@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import TypedDict, cast
 
 from .. import catalog
 from ..catalog.models import Companion, CompanionVariant
@@ -23,7 +23,6 @@ class Manifest(TypedDict):
     builds: list[str]
     cli: ManifestEntry
     bundles: dict[str, ManifestEntry]
-    fingerprints: NotRequired[dict[str, str | None]]
 
 
 class ManifestError(Exception):

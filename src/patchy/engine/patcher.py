@@ -4,15 +4,11 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ..core import log
-from ..core.process import ProcessTimeout, clean_env, run_capture
+from ..core.process import clean_env, run_capture
 from ..core.settings import settings
-from . import notes
-from .report import read_report
 
 STREAM_LIMIT = 1024 * 1024
 SAVED_PATTERN = re.compile(r"INFO:\s+Saved to\s+([^\r\n]+\.apk)", re.IGNORECASE)
-PATCH_NAME_PATTERN = re.compile(r"^(?:INFO:\s*)?Name:\s*(.+?)\s*$")
-PATCH_INDEX_PATTERN = re.compile(r"^(?:INFO:\s*)?Index:\s*\d+$")
 UNSUPPORTED_WORDING = re.compile(
     r"(?:\bnot|n['’]t)\s+(?:yet\s+)?(?:support(?:ed|s)?|compatible)|\b(?:unsupported|incompatible)",
     re.IGNORECASE,
@@ -65,16 +61,8 @@ def build_patch_command(
     enable: list[str] | None = None,
     options: dict[str, str | None] | None = None,
     arch: str = "arm64-v8a",
-    result_file: str | Path | None = None,
-    force: bool = False,
 ) -> list[str]:
     cmd = ["java", "-jar", str(cli_jar), "patch", "--unsigned"]
-
-    if force:
-        cmd.append("--force")
-
-    if result_file is not None:
-        cmd += ["--result-file", str(result_file)]
 
     for bundle in bundles:
         cmd += ["--patches", str(bundle)]
@@ -133,20 +121,11 @@ async def patch_apk(
     enable: list[str] | None = None,
     options: dict[str, str | None] | None = None,
     arch: str = "arm64-v8a",
-    result_file: str | Path | None = None,
-    force: bool = False,
 ) -> str:
     log.patch(f"Patching APK & stripping unused architectures ({arch} only)...")
     log.notice("Patching unsigned: the APK is signed with your key in the release job.")
-    if force:
-        log.warn("Patching with --force: the patcher will not check this version against the patches.")
 
-    if result_file is not None:
-        Path(result_file).parent.mkdir(parents=True, exist_ok=True)
-        Path(result_file).unlink(missing_ok=True)
-        notes.set_report(None)
-
-    cmd = build_patch_command(cli_jar, bundles, apk, exclude, enable, options, arch, result_file, force)
+    cmd = build_patch_command(cli_jar, bundles, apk, exclude, enable, options, arch)
     log.step(f"Executing command: {' '.join(cmd)}")
 
     process = await asyncio.create_subprocess_exec(
@@ -160,12 +139,6 @@ async def patch_apk(
     lines = await _stream_lines(process, settings.patch_timeout)
     output = "".join(lines)
 
-    report = read_report(result_file) if result_file is not None else None
-    if result_file is not None:
-        notes.set_report(report)
-        if report is None:
-            log.warn("The patcher wrote no readable result file, so the applied patches are not listed.")
-
     if "Applying 0 patches" in output:
         raise NoCompatiblePatches("Applying 0 patches. No compatible patch found or version not supported.")
 
@@ -177,19 +150,16 @@ async def patch_apk(
         raise PatchFailed(message)
 
     match = SAVED_PATTERN.search(output)
-    reported = report.get("output") if report is not None else None
-    if not match and not reported:
+    if not match:
         raise RuntimeError(f"Cannot find patched APK path in output:\n{output}")
 
-    patched_apk = match.group(1).strip() if match else str(reported)
+    patched_apk = match.group(1).strip()
 
     if not Path(patched_apk).exists():
         raise RuntimeError(f"Patched APK does not exist:\n{patched_apk}")
 
     log.success("Patch done")
     log.saved(f"Output: {patched_apk}")
-    if report is not None and report["applied"]:
-        log.info(f"Applied {len(report['applied'])} patch(es): {', '.join(report['applied'])}")
 
     return patched_apk
 
@@ -212,43 +182,3 @@ async def list_versions(
         log.warn(f"'list-versions' exited with code {result.returncode}, skipping CLI-reported versions: {tail}")
         return None
     return result.output
-
-
-def parse_patch_names(output: str) -> list[str]:
-    names: list[str] = []
-    previous: str | None = None
-    for raw in output.splitlines():
-        line = raw.strip()
-        match = PATCH_NAME_PATTERN.match(line)
-        starts_entry = previous is None or not previous or PATCH_INDEX_PATTERN.match(previous) is not None
-        if match and starts_entry and match.group(1) not in names:
-            names.append(match.group(1))
-        previous = line
-    return names
-
-
-async def list_patch_names(cli_jar: str | Path, bundles: Sequence[str | Path], pkg: str) -> list[str] | None:
-    cmd = [
-        "java",
-        "-jar",
-        str(cli_jar),
-        "list-patches",
-        "--filter-package-name",
-        pkg,
-        "--include-experimental",
-    ]
-    for bundle in bundles:
-        cmd += ["--patches", str(bundle)]
-
-    try:
-        result = await run_capture(cmd, timeout=settings.download_timeout, stderr_to_stdout=False)
-    except (ProcessTimeout, OSError) as e:
-        log.warn(f"'list-patches' could not run, so patch names are not checked: {e}")
-        return None
-
-    if result.returncode != 0:
-        tail = " | ".join(result.error.strip().splitlines()[-5:]) or "(no output)"
-        log.warn(f"'list-patches' exited with code {result.returncode}, so patch names are not checked: {tail}")
-        return None
-
-    return parse_patch_names(result.output) or None

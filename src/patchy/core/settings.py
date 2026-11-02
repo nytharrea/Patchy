@@ -55,9 +55,6 @@ class Settings(BaseSettings):
     release_name: str | None = None
     sign_concurrency: int = Field(default=4, ge=1)
     upload_concurrency: int = Field(default=10, ge=1)
-    keep_releases: int = Field(default=1, ge=0)
-    carry_forward: bool = True
-    catalog_url: str = "https://morphe-patches.software/data/bundles.json"
 
 
 settings = Settings()

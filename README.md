@@ -8,12 +8,10 @@ Patchy is an independent project. It is not affiliated with the Morphe or ReVanc
 
 `release.yml` runs as four jobs:
 
-1. **plan** validates `config/`, computes the release tag, name and build matrix, and downloads the patcher CLI plus every patch bundle once for the whole run. On scheduled runs, and when you tick `only_changed`, it first drops the apps whose patcher, patch bundles, app and configuration are the same as in the last release.
+1. **plan** validates `config/`, computes the release tag, name and build matrix, and downloads the patcher CLI plus every patch bundle once for the whole run.
 2. **build** runs one runner per build, in parallel. Each runner downloads the original APK (APKMirror through a FlareSolverr sidecar, or a GitHub release), checks its signing certificate against `pins/known.json`, and patches it. This job runs third-party patch code, so it holds no signing key and only a read-only token.
-3. **release** downloads every built APK, zipaligns and signs it with the newest `apksigner`, verifies the result, attests build provenance, creates one GitHub Release with release notes (the patches applied to each app, the versions that had to be skipped, warnings), uploads the APKs (plus MicroG and PotHelper when YouTube or YT Music was built), copies in the APK of every app that was not rebuilt so the release always holds all of them, removes older Patchy releases except the newest one, sends a notification, and writes a table with the download, patch and total time of every build to the run's job summary.
+3. **release** downloads every built APK, zipaligns and signs it with the newest `apksigner`, verifies the result, attests build provenance, creates one GitHub Release with release notes, uploads the APKs (plus MicroG and PotHelper when YouTube or YT Music was built), removes older Patchy releases, sends a notification, and writes a table with the download, patch and total time of every build to the run's job summary.
 4. **cleanup** deletes old workflow runs.
-
-`release.yml` also runs every six hours and builds only what changed, so a quiet run ends after `plan` without a release. When a version cannot be patched, Patchy steps down to the next version the patch bundles support, and a build can opt in to `--force` (`force: true`) to patch a version the bundles do not list yet. A separate `discover.yml`, which you can start from a phone, looks up the Morphe patch catalog and writes a report of which bundles patch an app, with YAML to paste into `config/`.
 
 A separate `ci.yml` runs `ruff`, `mypy` and `pytest` on every push and pull request, and also hosts two maintenance jobs you can start by hand: one that regenerates `uv.lock`, and one that fixes lint and formatting.
 
@@ -28,10 +26,10 @@ A separate `ci.yml` runs `ruff`, `mypy` and `pytest` on every push and pull requ
 | Page | What it covers |
 |---|---|
 | [Getting started](docs/getting-started.md) | Repository settings, secrets, first lock file, first run, pinning certificates |
-| [Configuration](docs/configuration.md) | `config/apps/*.yaml`, `config/bundles.yaml`, `config/companions.yaml`, how versions are chosen, stepping down and forced patching |
+| [Configuration](docs/configuration.md) | `config/apps/*.yaml`, `config/bundles.yaml`, `config/companions.yaml` |
 | [Apps](docs/apps.md) | Every build that ships today and how to add a new app |
 | [Signing](docs/signing.md) | Key isolation, `apksigner`, certificate pins, verifying a downloaded APK |
-| [Workflows](docs/workflows.md) | Jobs, inputs, schedule, artifacts, build telemetry, only-changed runs and release retention of `release.yml`, plus `discover.yml` and `ci.yml` |
+| [Workflows](docs/workflows.md) | Jobs, inputs, artifacts and build telemetry of `release.yml` and `ci.yml` |
 | [Development](docs/development.md) | Project layout, `uv`, tests, CLI and environment reference |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures and what to do about them |
 | [Site](docs/site.md) | The GitHub Pages site: deploy, data flow, local preview, customizing |
@@ -47,7 +45,7 @@ patchy/
 ├─ site/          GitHub Pages site (static, no build step)
 ├─ docs/
 ├─ build/         all generated files (ignored by git)
-└─ .github/workflows/   ci.yml, release.yml, discover.yml, pages.yml
+└─ .github/workflows/   ci.yml, release.yml, pages.yml
 ```
 
 ## License

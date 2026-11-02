@@ -6,25 +6,9 @@ from pathlib import Path
 
 from .core import log
 
-TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-
 
 def _env_default(name: str, fallback: str = "") -> str:
     return os.environ.get(name, fallback)
-
-
-def _env_flag(name: str) -> bool:
-    return _env_default(name).strip().lower() in TRUE_VALUES
-
-
-def _positive_int(text: str) -> int:
-    try:
-        value = int(text)
-    except ValueError as e:
-        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number") from e
-    if value < 1:
-        raise argparse.ArgumentTypeError("must be 1 or more")
-    return value
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -40,7 +24,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    from .catalog.plan import PlanError, make_plan, narrow, write_github_output
+    from .catalog.plan import PlanError, make_plan, write_github_output
     from .catalog.validate import ConfigError, validate_catalog
 
     try:
@@ -49,17 +33,6 @@ def cmd_plan(args: argparse.Namespace) -> int:
     except (ConfigError, PlanError) as e:
         log.error(f"Planning failed:\n{e}")
         return 1
-
-    if args.only_changed:
-        from .publish.incremental import select_changed
-
-        plan = narrow(plan, asyncio.run(select_changed(plan.matrix)))
-        if not plan.has_builds:
-            log.notice("Nothing changed since the last release, so no build runs.")
-            log.step_summary(
-                "## Nothing to build\n\n"
-                "The patcher, the patch bundles, the apps and the configuration are unchanged since the last release."
-            )
 
     log.info(f"Release tag for this run: {plan.tag}")
     log.info(f"Release name for this run: {plan.name}")
@@ -80,13 +53,6 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     manifest = asyncio.run(fetch_all(builds))
     log.saved(f"Fetched the CLI and {len(manifest['bundles'])} patch bundle(s) for {len(builds)} build(s).")
-
-    try:
-        from .publish.incremental import record_fingerprints
-
-        asyncio.run(record_fingerprints(manifest))
-    except Exception as e:
-        log.warn(f"Could not record what these builds are made from, so the next only-changed run builds all: {e}")
     return 0
 
 
@@ -171,24 +137,6 @@ def cmd_pin(args: argparse.Namespace) -> int:
         return 1
 
 
-def cmd_discover(args: argparse.Namespace) -> int:
-    from .catalog.discover import build_report
-    from .fetch.morphe import MorpheCatalogError, fetch_catalog
-
-    try:
-        morphe = asyncio.run(fetch_catalog())
-    except MorpheCatalogError as e:
-        log.error(str(e))
-        return 1
-
-    markdown = build_report(morphe, package=args.package, query=args.query, limit=args.limit)
-    if log.step_summary(markdown):
-        log.success("Wrote the Morphe catalog report to the job summary.")
-    else:
-        print(markdown)
-    return 0
-
-
 def cmd_toolchain(args: argparse.Namespace) -> int:
     from .core import toolchain
 
@@ -222,12 +170,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan = commands.add_parser("plan", help="validate config and write the release plan")
     _add_builds_option(plan)
-    plan.add_argument(
-        "--only-changed",
-        action="store_true",
-        default=_env_flag("ONLY_CHANGED"),
-        help="skip builds whose patcher, patch bundles, app and configuration match the last release",
-    )
     plan.set_defaults(func=cmd_plan)
 
     fetch = commands.add_parser("fetch", help="download the patcher CLI and patch bundles")
@@ -252,25 +194,6 @@ def build_parser() -> argparse.ArgumentParser:
     pin.add_argument("--sha256", help="the fingerprint you verified; must equal the pending one")
     pin.add_argument("--collect", metavar="DIR", help="record pending fingerprints from build statuses in DIR")
     pin.set_defaults(func=cmd_pin)
-
-    discover = commands.add_parser("discover", help="look up apps and patch bundles in the Morphe catalog")
-    discover.add_argument(
-        "--package",
-        default=_env_default("DISCOVER_PACKAGE"),
-        help="package name to look up: the bundles that patch it and ready-made config (wins over --query)",
-    )
-    discover.add_argument(
-        "--query",
-        default=_env_default("DISCOVER_QUERY"),
-        help="search the catalog by app or package name",
-    )
-    discover.add_argument(
-        "--limit",
-        type=_positive_int,
-        default=_env_default("DISCOVER_LIMIT") or "20",
-        help="most rows to list in a table",
-    )
-    discover.set_defaults(func=cmd_discover)
 
     toolchain = commands.add_parser("toolchain", help="find (and install the latest) Android build-tools")
     toolchain.add_argument("--no-install", action="store_true", help="only use what is already installed")

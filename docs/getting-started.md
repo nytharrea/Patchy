@@ -52,10 +52,7 @@ From then on Dependabot (`uv` ecosystem) keeps the lock current. You can run the
 |---|---|
 | `builds` | Comma-separated build keys such as `youtube,gboard`, or `all` (default) |
 | `pin` | An app slug to trust, see below. When set, nothing is built |
-| `only_changed` | Tick it to build only the apps whose patcher, patch bundles, app or configuration changed since the last release. Off by default, so everything selected is built |
 | `pin_sha256` | Optional: the fingerprint you verified, which must equal the pending one |
-
-The workflow also runs by itself every six hours and then builds only what changed, so once the repository is set up it keeps its release current. The first run has no earlier release to compare with and builds every app. See [Workflows](workflows.md#releaseyml) for how to change or stop the schedule.
 
 ## 5. Pinning original certificates
 

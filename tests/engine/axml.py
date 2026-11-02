@@ -7,14 +7,11 @@ from patchy.engine.label import MANIFEST_ENTRY, _parse_manifest
 ANDROID_URI = "http://schemas.android.com/apk/res/android"
 LABEL_ID = 0x01010001
 NAME_ID = 0x01010003
-VERSION_CODE_ID = 0x0101021B
-VERSION_NAME_ID = 0x0101021C
 LAUNCHER = "android.intent.category.LAUNCHER"
 MAIN = "android.intent.action.MAIN"
 
 STRING = 0x03
 REFERENCE = 0x01
-INT_DEC = 0x10
 NONE = 0xFFFFFFFF
 
 FIXED_STRINGS = [
@@ -112,16 +109,10 @@ def build_manifest(
     other: str = "Other",
     utf8: bool = True,
     styles: int = 0,
-    package: str | None = "com.example.app",
-    version_name: str | None = None,
-    version_code: int | str | None = None,
-    mapped: bool = True,
-    root: str = "manifest",
 ) -> bytes:
     strings = _Strings()
     index = strings.add
     android = index(ANDROID_URI)
-    resource_ids = {0: LABEL_ID, 1: NAME_ID}
 
     def label_attribute(label: Label) -> list[bytes]:
         if label is None:
@@ -138,29 +129,10 @@ def build_manifest(
         position = index(value)
         return _attribute(android, 1, position, STRING, position)
 
-    root_attributes: list[bytes] = []
-    if package is not None:
-        package_position = index(package)
-        root_attributes.append(_attribute(NONE, index("package"), package_position, STRING, package_position))
-    if version_code is not None:
-        position = index("versionCode")
-        if mapped:
-            resource_ids[position] = VERSION_CODE_ID
-        if isinstance(version_code, str):
-            value = index(version_code)
-            root_attributes.append(_attribute(android, position, value, STRING, value))
-        else:
-            root_attributes.append(_attribute(android, position, NONE, INT_DEC, version_code))
-    if version_name is not None:
-        position = index("versionName")
-        value = index(version_name)
-        if mapped:
-            resource_ids[position] = VERSION_NAME_ID
-        root_attributes.append(_attribute(android, position, value, STRING, value))
-
+    package = index("com.example.app")
     nodes = [
         _namespace(0x0100, index("android"), android),
-        _start(index(root), root_attributes),
+        _start(index("manifest"), [_attribute(NONE, index("package"), package, STRING, package)]),
         _start(index("application"), label_attribute(app)),
         _start(index("activity"), label_attribute(launcher) + [name_attribute(".Main")]),
         _start(index("intent-filter"), []),
@@ -173,13 +145,12 @@ def build_manifest(
         _start(index("activity"), label_attribute(text_label(other)) + [name_attribute(".Other")]),
         _end(index("activity")),
         _end(index("application")),
-        _end(index(root)),
+        _end(index("manifest")),
         _namespace(0x0101, index("android"), android),
     ]
 
     pool = string_pool(strings.items, utf8, styles)
-    ids = [resource_ids.get(position, 0) for position in range(max(resource_ids) + 1)]
-    resource_map = struct.pack("<HHI", 0x0180, 8, 8 + 4 * len(ids)) + struct.pack(f"<{len(ids)}I", *ids)
+    resource_map = struct.pack("<HHI", 0x0180, 8, 8 + 8) + struct.pack("<II", LABEL_ID, NAME_ID)
     body = pool + resource_map + b"".join(nodes)
     return struct.pack("<HHI", 0x0003, 8, 8 + len(body)) + body
 

@@ -73,13 +73,11 @@ async def fetch_latest_release(
     return release
 
 
-async def _download_file(
-    url: str, output_path: Path, expected_size: int | None = None, extra_headers: dict[str, str] | None = None
-) -> str:
+async def _download_file(url: str, output_path: Path, expected_size: int | None = None) -> str:
     temp_path = output_path.with_name(output_path.name + ".part")
     downloaded = temp_path.stat().st_size if temp_path.exists() else 0
 
-    headers = {"User-Agent": "python", "Accept": "*/*", **(extra_headers or {})}
+    headers = {"User-Agent": "python", "Accept": "*/*"}
     if downloaded > 0:
         headers["Range"] = f"bytes={downloaded}-"
         log.download(f"Resuming at {downloaded} bytes")
@@ -104,33 +102,6 @@ async def _download_file(
 
     temp_path.rename(output_path)
     return str(output_path)
-
-
-async def download_to(
-    url: str, output_path: Path, expected_size: int | None = None, headers: dict[str, str] | None = None
-) -> str:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    @retry(
-        stop=stop_after_attempt(5),
-        wait=retry_conf.exponential_with_jitter(max=30.0),
-        before_sleep=retry_conf.before_sleep("GitHub download"),
-        reraise=True,
-    )
-    async def _do() -> str:
-        return await _download_file(url, output_path, expected_size, headers)
-
-    return await _do()
-
-
-async def latest_release_tag(owner: str, repo: str) -> str | None:
-    try:
-        release = await fetch_latest_release(owner, repo)
-    except Exception as e:
-        log.warn(f"Could not look up the latest release of {owner}/{repo}: {e}")
-        return None
-    tag = release.get("tag_name") if isinstance(release, dict) else None
-    return str(tag) if tag else None
 
 
 def _asset_info(asset: dict, release: dict, path: Path) -> ReleaseAsset:
