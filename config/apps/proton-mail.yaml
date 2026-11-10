@@ -10,4 +10,3 @@ apk_source:
 builds:
   - key: "proton-mail"
     bundles: ["hxreborn"]
-    force_version: "7.11.5"
