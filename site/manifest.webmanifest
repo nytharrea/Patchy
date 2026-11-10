@@ -1,0 +1,24 @@
+{
+  "name": "Patchy | Yamalı Android uygulamaları",
+  "short_name": "Patchy",
+  "description": "Android uygulamalarını indiren, yamalayan, kendi anahtarınla imzalayan ve GitHub sürümü olarak yayınlayan bir GitHub Actions hattı.",
+  "lang": "tr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#04151c",
+  "theme_color": "#04151c",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

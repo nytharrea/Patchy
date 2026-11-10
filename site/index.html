@@ -20,6 +20,10 @@
 <link rel="canonical" href="__SITE_URL__/">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preload" href="assets/fonts/inter-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/inter-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/inter-display-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="modulepreload" href="assets/vendor/glassy-liquid.min.js">
 <link rel="stylesheet" href="assets/style.css">
 <noscript><style>#status,#tabs{display:none}</style></noscript>
@@ -42,6 +46,9 @@
         <glass-segment value="tr">TR</glass-segment>
         <glass-segment value="en">EN</glass-segment>
       </glass-segmented>
+      <glass-button id="tuner-btn" shape="circle" dispersion="0.5" specular="1.6" aria-label="Cam ayarları" data-i18n-attr="aria-label:head.tuner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      </glass-button>
       <glass-button id="theme" shape="circle" dispersion="0.5" specular="1.6" aria-label="Temayı değiştir" data-i18n-attr="aria-label:head.theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 3.8v16.4a8.2 8.2 0 0 0 0-16.4z" fill="currentColor"/></svg>
       </glass-button>
@@ -75,6 +82,14 @@
         </div>
         <div class="toolbar">
           <glass-search id="q" blur="6" placeholder="Uygulama ara" data-i18n-attr="placeholder:apps.search"></glass-search>
+          <glass-menu id="bundle-menu" placement="bottom-end">
+            <glass-button slot="trigger" dispersion="0.5" specular="1.6" aria-label="Yama kaynağı" data-i18n-attr="aria-label:filter.bundle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              <span id="bundle-label" data-i18n="filter.bundle">Yama kaynağı</span>
+            </glass-button>
+            <glass-menu-label data-i18n="filter.bundle">Yama kaynağı</glass-menu-label>
+            <div id="bundle-items"></div>
+          </glass-menu>
           <glass-menu id="sort" placement="bottom-end">
             <glass-button slot="trigger" dispersion="0.5" specular="1.6" aria-label="Sırala" data-i18n-attr="aria-label:apps.sort">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10"/><path d="M4 12h7"/><path d="M4 17h4"/><path d="M17 5v14"/><path d="m13.5 15.5 3.5 3.5 3.5-3.5"/></svg>
@@ -238,6 +253,41 @@
 
 <glass-sheet id="sheet" detents="medium large" modal aria-label="Uygulama ayrıntıları" data-i18n-attr="aria-label:sheet.label">
   <div id="sheet-body" class="sheet-body"></div>
+</glass-sheet>
+
+<glass-sheet id="tuner-sheet" detents="medium" modal aria-label="Sıvı Cam Ayarları" data-i18n-attr="aria-label:tuner.title">
+  <div class="sheet-body tuner-body">
+    <h3 data-i18n="tuner.title">Sıvı Cam Ayarları</h3>
+    <div class="tuner-grid">
+      <div class="tuner-row">
+        <span class="tuner-label" data-i18n="tuner.tier">Kalite katmanı</span>
+        <div class="variants" id="tuner-tiers" role="group">
+          <button type="button" class="variant" data-tier="full" data-i18n="tuner.tier.full">Tam (Kırılma)</button>
+          <button type="button" class="variant" data-tier="lite" data-i18n="tuner.tier.lite">Hafif (Buzlu)</button>
+          <button type="button" class="variant" data-tier="flat" data-i18n="tuner.tier.flat">Düz (Performans)</button>
+        </div>
+      </div>
+      <label class="tuner-row">
+        <span class="tuner-label"><span data-i18n="tuner.blur">Bulanıklık ölçeği</span> <strong id="val-blur">1.0x</strong></span>
+        <input type="range" id="rng-blur" min="0" max="2" step="0.1" value="1">
+      </label>
+      <label class="tuner-row">
+        <span class="tuner-label"><span data-i18n="tuner.refraction">Kırılma ölçeği</span> <strong id="val-refraction">1.0x</strong></span>
+        <input type="range" id="rng-refraction" min="0" max="2" step="0.1" value="1">
+      </label>
+      <label class="tuner-row">
+        <span class="tuner-label"><span data-i18n="tuner.dispersion">Kromatik aberasyon</span> <strong id="val-dispersion">0.38</strong></span>
+        <input type="range" id="rng-dispersion" min="0" max="1" step="0.02" value="0.38">
+      </label>
+      <label class="tuner-row">
+        <span class="tuner-label"><span data-i18n="tuner.specular">Yansıma yoğunluğu</span> <strong id="val-specular">1.75</strong></span>
+        <input type="range" id="rng-specular" min="0" max="3" step="0.05" value="1.75">
+      </label>
+    </div>
+    <div class="sheet-actions">
+      <button type="button" id="tuner-reset" class="btn" data-i18n="tuner.reset">Varsayılana sıfırla</button>
+    </div>
+  </div>
 </glass-sheet>
 </glass-scene>
 

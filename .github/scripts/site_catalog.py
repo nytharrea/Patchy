@@ -7,6 +7,8 @@ from pathlib import Path
 
 from patchy import catalog
 from patchy.catalog import loader
+from patchy.core.settings import settings
+from patchy.engine.pins import load_pins
 
 DEFAULT_OUTPUT = "build/site/data/catalog.json"
 DEFAULT_CATEGORY = "other"
@@ -54,6 +56,13 @@ def _app_titles() -> dict[str, str]:
     return titles
 
 
+def _known_pins() -> dict[str, str]:
+    try:
+        return load_pins(settings.known_pins_path)
+    except Exception:
+        return {}
+
+
 def _bundle(key: str) -> dict[str, str]:
     bundle = catalog.BUNDLES[key]
     return {
@@ -69,20 +78,32 @@ def _source(source: dict) -> dict[str, str]:
     return {"type": "apkmirror", "url": f"https://www.apkmirror.com/apk/{source['org']}/{source['slug']}/"}
 
 
-def _build(key: str, titles: dict[str, str]) -> dict:
+def _companions_for(build_key: str, app_slug: str) -> list[str]:
+    matched: list[str] = []
+    for comp_key, comp in catalog.COMPANIONS.items():
+        targets = comp.get("for_builds", [])
+        if build_key in targets or app_slug in targets:
+            matched.append(comp_key)
+    return matched
+
+
+def _build(key: str, titles: dict[str, str], pins: dict[str, str]) -> dict:
     build = catalog.BUILDS[key]
     name, tag = catalog.get_release_naming(key)
+    app_slug = build["app_slug"]
     return {
         "key": key,
-        "app": build["app_slug"],
-        "title": titles.get(build["app_slug"], build["display_name"]),
+        "app": app_slug,
+        "title": titles.get(app_slug, build["display_name"]),
         "name": name,
         "tag": tag,
         "variant": _clean_label(catalog.BUNDLES[build["bundles"][0]]["label"]),
         "pkg": build["pkg"],
         "icon": build["icon"],
         "arch": build["arch"],
-        "category": CATEGORIES.get(build["app_slug"], DEFAULT_CATEGORY),
+        "category": CATEGORIES.get(app_slug, DEFAULT_CATEGORY),
+        "pin": pins.get(app_slug),
+        "companions": _companions_for(key, app_slug),
         "source": _source(build["apk_source"]),
         "bundles": [_bundle(bundle) for bundle in build["bundles"]],
     }
@@ -100,10 +121,11 @@ def _companion(key: str) -> dict:
 
 def build_payload() -> dict:
     titles = _app_titles()
+    pins = _known_pins()
     return {
         "repo": os.environ.get("GITHUB_REPOSITORY") or None,
         "generated": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "builds": [_build(key, titles) for key in catalog.BUILDS],
+        "builds": [_build(key, titles, pins) for key in catalog.BUILDS],
         "companions": [_companion(key) for key in catalog.COMPANIONS],
     }
 
