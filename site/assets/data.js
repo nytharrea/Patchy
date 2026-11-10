@@ -60,7 +60,6 @@ function slimRelease(json) {
       url: String(asset.browser_download_url || ""),
       downloads: Number(asset.download_count) || 0,
       updated: asset.updated_at || null,
-      digest: typeof asset.digest === "string" ? asset.digest.replace(/^sha256:/i, "") : null,
     })),
   };
 }
@@ -138,8 +137,6 @@ export function deriveBuilds(assets, companions = []) {
       icon: "",
       arch: "",
       category: "other",
-      pin: null,
-      companions: [],
       source: null,
       bundles: [],
       asset: { ...asset, version },
@@ -158,8 +155,6 @@ export function groupApps(builds, matched) {
         pkg: build.pkg,
         icon: build.icon,
         category: build.category,
-        pin: build.pin || null,
-        companions: Array.isArray(build.companions) ? build.companions : [],
         builds: [],
       });
     }

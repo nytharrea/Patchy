@@ -286,13 +286,8 @@ export function initWorld(world, page) {
 
   let signature = "";
   let timer = 0;
-  let pendingHidden = false;
 
   const layout = () => {
-    if (document.visibilityState === "hidden") {
-      pendingHidden = true;
-      return;
-    }
     const width = Math.round(page.clientWidth);
     const height = Math.round(page.offsetHeight);
     if (!width || !height) return;
@@ -349,12 +344,6 @@ export function initWorld(world, page) {
     timer = setTimeout(layout, 120);
   };
 
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && pendingHidden) {
-      pendingHidden = false;
-      later();
-    }
-  });
   layout();
   if (typeof ResizeObserver === "function") new ResizeObserver(later).observe(page);
   else window.addEventListener("resize", later, { passive: true });

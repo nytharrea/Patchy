@@ -29,8 +29,6 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v10.5"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/></svg>',
   more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="18.5" cy="12" r="1.9"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="3"/><path d="M15.5 8.5V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v5.5a3 3 0 0 0 3 3h1.5"/></svg>',
-  shield:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 19 5.9v5.3c0 4.4-2.9 7.9-7 9.6-4.1-1.7-7-5.2-7-9.6V5.9z"/><path d="m8.8 12.1 2.2 2.2 4.3-4.5"/></svg>',
 };
 
 const CATEGORY_ORDER = ["all", "social", "media", "tools", "privacy", "other"];
@@ -45,22 +43,11 @@ const state = {
   companions: [],
   query: "",
   category: "all",
-  bundle: "all",
-  onlyCompanion: false,
   sort: "name",
   pick: new Map(),
   sheet: null,
   glass: null,
 };
-
-function transitionRender(updateFn) {
-  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!reduced && typeof document.startViewTransition === "function") {
-    document.startViewTransition(() => updateFn());
-  } else {
-    updateFn();
-  }
-}
 
 function icon(name) {
   const template = document.createElement("template");
@@ -120,11 +107,6 @@ function visibleApps() {
 
   const list = state.apps.filter((app) => {
     if (state.category !== "all" && app.category !== state.category) return false;
-    if (state.onlyCompanion && (!app.companions || app.companions.length === 0)) return false;
-    if (state.bundle !== "all") {
-      const hasBundle = app.builds.some((b) => b.bundles && b.bundles.some((bd) => bd.key === state.bundle || bd.label === state.bundle));
-      if (!hasBundle) return false;
-    }
     if (!query) return true;
     const words = [app.title, app.pkg];
     for (const build of app.builds) {
@@ -218,7 +200,6 @@ function renderCard(app) {
   const asset = build.asset;
   const locale = getLang();
   const card = el("article", { class: "card", "data-app": app.id, "data-missing": asset ? null : "true" });
-  card.style.viewTransitionName = `app-${app.id.replace(/[^a-z0-9_-]/gi, "-")}`;
 
   card.append(
     el(
@@ -245,26 +226,6 @@ function renderCard(app) {
     }
   }
   if (build.source) meta.append(el("span", { text: t(`source.${build.source.type}`) }));
-
-  const hashValue = (asset && asset.digest) || app.pin;
-  if (hashValue) {
-    const shortHash = `${hashValue.slice(0, 8)}…`;
-    const badge = el(
-      "button",
-      {
-        type: "button",
-        class: "sig-badge",
-        title: `${t("card.verified")}: ${hashValue}`,
-        onclick: async () => {
-          if (await copyText(hashValue)) flashCopied(badge);
-        },
-      },
-      icon("shield"),
-      el("span", { "data-copy-label": "", text: shortHash }),
-    );
-    meta.append(badge);
-  }
-
   if (meta.childElementCount) card.append(meta);
 
   card.append(actionRow(app, build));
@@ -278,54 +239,6 @@ function replaceCard(app) {
   old.replaceWith(fresh);
   const pressed = $('.variant[aria-pressed="true"]', fresh);
   if (pressed) pressed.focus();
-}
-
-function renderBundleMenu() {
-  const container = $("#bundle-items");
-  const menu = $("#bundle-menu");
-  const labelNode = $("#bundle-label");
-  if (!container || !menu) return;
-  container.replaceChildren();
-
-  const bundlesMap = new Map();
-  for (const app of state.apps) {
-    for (const build of app.builds) {
-      for (const b of build.bundles || []) {
-        if (!bundlesMap.has(b.key)) bundlesMap.set(b.key, b.label);
-      }
-    }
-  }
-
-  if (bundlesMap.size <= 1) {
-    menu.hidden = true;
-    return;
-  }
-  menu.hidden = false;
-
-  const allItem = el("glass-menu-item", {
-    value: "all",
-    group: "bundle",
-    checkable: "",
-    checked: state.bundle === "all" ? "" : null,
-    text: t("filter.bundle.all"),
-  });
-  container.append(allItem);
-
-  for (const [key, label] of bundlesMap.entries()) {
-    container.append(
-      el("glass-menu-item", {
-        value: key,
-        group: "bundle",
-        checkable: "",
-        checked: state.bundle === key ? "" : null,
-        text: label,
-      }),
-    );
-  }
-
-  if (labelNode) {
-    labelNode.textContent = state.bundle === "all" ? t("filter.bundle") : bundlesMap.get(state.bundle) || t("filter.bundle");
-  }
 }
 
 function renderChips() {
@@ -349,24 +262,7 @@ function renderChips() {
         onclick: () => {
           state.category = key;
           renderChips();
-          transitionRender(() => renderGrid());
-        },
-      }),
-    );
-  }
-
-  const hasCompanions = state.apps.some((app) => app.companions && app.companions.length > 0);
-  if (hasCompanions) {
-    holder.append(
-      el("button", {
-        type: "button",
-        class: "chip chip-companion",
-        "aria-pressed": String(state.onlyCompanion),
-        text: t("filter.companion"),
-        onclick: () => {
-          state.onlyCompanion = !state.onlyCompanion;
-          renderChips();
-          transitionRender(() => renderGrid());
+          renderGrid();
         },
       }),
     );
@@ -517,7 +413,6 @@ function renderCompanions() {
 
 function renderAll() {
   renderStatus();
-  renderBundleMenu();
   renderChips();
   renderGrid();
   renderCompanions();
@@ -591,12 +486,6 @@ function fillSheet(app, build) {
   if (asset && asset.downloads > 0) rows.push(detailRow(t("d.downloads"), formatCount(asset.downloads, locale)));
   if (asset && asset.updated) rows.push(detailRow(t("d.updated"), formatDate(asset.updated, locale)));
   if (build.arch) rows.push(detailRow(t("d.arch"), build.arch));
-  if (asset && asset.digest) {
-    rows.push(detailRow(t("d.digest"), el("span", { class: "mono", text: asset.digest }), copyButton(asset.digest, true)));
-  }
-  if (app.pin) {
-    rows.push(detailRow(t("d.pin"), el("span", { class: "mono", text: app.pin }), copyButton(app.pin, true)));
-  }
   if (build.source && safeHttps(build.source.url)) {
     rows.push(
       detailRow(
@@ -617,31 +506,6 @@ function fillSheet(app, build) {
               "li",
               {},
               el("a", { href: safeHttps(bundle.url), target: "_blank", rel: "noopener", text: bundle.label }),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-  if (app.companions && app.companions.length) {
-    rows.push(
-      detailRow(
-        t("d.companions"),
-        el(
-          "ul",
-          {},
-          app.companions.map((compKey) =>
-            el(
-              "li",
-              {},
-              el("a", {
-                href: "#companions",
-                text: has(`comp.${compKey}.title`) ? t(`comp.${compKey}.title`) : compKey,
-                onclick: () => {
-                  const sheet = $("#sheet");
-                  if (sheet && typeof sheet.hide === "function") sheet.hide();
-                },
-              }),
             ),
           ),
         ),
@@ -673,74 +537,6 @@ function initSheet() {
   const sheet = $("#sheet");
   sheet.addEventListener("toggle", (event) => {
     if (event.detail && event.detail.open === false) state.sheet = null;
-  });
-}
-
-function initTuner() {
-  const btn = $("#tuner-btn");
-  const sheet = $("#tuner-sheet");
-  if (!btn || !sheet) return;
-
-  const rngBlur = $("#rng-blur");
-  const rngRefraction = $("#rng-refraction");
-  const rngDispersion = $("#rng-dispersion");
-  const rngSpecular = $("#rng-specular");
-  const valBlur = $("#val-blur");
-  const valRefraction = $("#val-refraction");
-  const valDispersion = $("#val-dispersion");
-  const valSpecular = $("#val-specular");
-  const tierBtns = $$("#tuner-tiers .variant");
-  const resetBtn = $("#tuner-reset");
-
-  const syncUi = () => {
-    if (!state.glass) return;
-    const cfg = state.glass.getSettings();
-    rngBlur.value = String(cfg.blurScale);
-    rngRefraction.value = String(cfg.refractionScale);
-    rngDispersion.value = String(cfg.dispersion);
-    rngSpecular.value = String(cfg.specular);
-    valBlur.textContent = `${Number(cfg.blurScale).toFixed(1)}x`;
-    valRefraction.textContent = `${Number(cfg.refractionScale).toFixed(1)}x`;
-    valDispersion.textContent = Number(cfg.dispersion).toFixed(2);
-    valSpecular.textContent = Number(cfg.specular).toFixed(2);
-    for (const b of tierBtns) {
-      b.setAttribute("aria-pressed", String(b.dataset.tier === cfg.tier));
-    }
-  };
-
-  btn.addEventListener("click", () => {
-    syncUi();
-    if (typeof sheet.show === "function") sheet.show();
-  });
-
-  for (const b of tierBtns) {
-    b.addEventListener("click", () => {
-      if (!state.glass) return;
-      state.glass.setTier(b.dataset.tier, true);
-      syncUi();
-    });
-  }
-
-  const onRange = () => {
-    if (!state.glass) return;
-    state.glass.configure({
-      blurScale: Number(rngBlur.value),
-      refractionScale: Number(rngRefraction.value),
-      dispersion: Number(rngDispersion.value),
-      specular: Number(rngSpecular.value),
-    });
-    syncUi();
-  };
-
-  rngBlur.addEventListener("input", onRange);
-  rngRefraction.addEventListener("input", onRange);
-  rngDispersion.addEventListener("input", onRange);
-  rngSpecular.addEventListener("input", onRange);
-
-  resetBtn.addEventListener("click", () => {
-    if (!state.glass) return;
-    state.glass.configure({ reset: true });
-    syncUi();
   });
 }
 
@@ -799,24 +595,14 @@ function initLang() {
 function initToolbar() {
   $("#q").addEventListener("input", (event) => {
     state.query = event.target.value || "";
-    transitionRender(() => renderGrid());
+    renderGrid();
   });
   $("#sort").addEventListener("select", (event) => {
     if (event.detail && event.detail.value) {
       state.sort = event.detail.value;
-      transitionRender(() => renderGrid());
+      renderGrid();
     }
   });
-  const bundleMenu = $("#bundle-menu");
-  if (bundleMenu) {
-    bundleMenu.addEventListener("select", (event) => {
-      if (event.detail && event.detail.value) {
-        state.bundle = event.detail.value;
-        renderBundleMenu();
-        transitionRender(() => renderGrid());
-      }
-    });
-  }
 }
 
 function initCopy() {
@@ -942,14 +728,6 @@ async function loadGlass() {
   }
 }
 
-function initPwa() {
-  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
-    });
-  }
-}
-
 async function boot() {
   applyTranslations();
   initWorld($("#world"), $(".page"));
@@ -960,8 +738,6 @@ async function boot() {
   initCopy();
   initNav();
   initSheet();
-  initTuner();
-  initPwa();
   loadGlass();
 
   state.catalog = await loadCatalog();

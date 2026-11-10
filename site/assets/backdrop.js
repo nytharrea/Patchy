@@ -246,37 +246,12 @@ export function initBackdrops(glass, { scene, stage }) {
     stitched: false,
   };
 
-  let stageVisible = true;
-  let needsRedraw = false;
-  if (typeof IntersectionObserver === "function") {
-    new IntersectionObserver((entries) => {
-      stageVisible = entries.some((entry) => entry.isIntersecting);
-      if (stageVisible && needsRedraw) {
-        needsRedraw = false;
-        requestAnimationFrame(drawArt);
-      }
-    }).observe(stage);
-  }
   const drawWall = () => {
-    if (document.visibilityState === "hidden") {
-      needsRedraw = true;
-      return;
-    }
     if (paintWall(wall) && typeof scene.invalidate === "function") scene.invalidate();
   };
   const drawArt = () => {
-    if (document.visibilityState === "hidden" || !stageVisible) {
-      needsRedraw = true;
-      return;
-    }
     if (paintArt(stageArt, stage, art) && typeof stage.invalidate === "function") stage.invalidate();
   };
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && needsRedraw) {
-      needsRedraw = false;
-      requestAnimationFrame(drawAll);
-    }
-  });
   const drawAll = () => {
     drawWall();
     drawArt();
